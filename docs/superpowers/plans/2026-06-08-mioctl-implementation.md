@@ -60,6 +60,11 @@ base64 = "0.22"
 url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"
+assert_matches = "1"
 ```
 
 - [ ] **Step 2: Create module tree**
@@ -421,7 +426,105 @@ pub struct ParsedNode {
 }
 ```
 
-- [ ] **Step 2: Verify compiles**
+- [ ] **Step 2: Write unit tests for JSON deserialization**
+
+Add at the bottom of `src/api/types.rs`:
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_proxies_response() {
+        let json = r#"{
+            "proxies": {
+                "GLOBAL": {
+                    "name": "GLOBAL",
+                    "type": "Selector",
+                    "now": "🇯🇵 Japan-01",
+                    "all": ["🇯🇵 Japan-01", "DIRECT", "REJECT"],
+                    "history": [{"time": "2026-06-08T12:00:00Z", "delay": 45}],
+                    "udp": true,
+                    "alive": true
+                }
+            }
+        }"#;
+        let resp: ProxiesResponse = serde_json::from_str(json).unwrap();
+        let global = resp.proxies.get("GLOBAL").unwrap();
+        assert_eq!(global.proxy_type, "Selector");
+        assert_eq!(global.now.as_deref(), Some("🇯🇵 Japan-01"));
+        assert_eq!(global.all.len(), 3);
+        assert_eq!(global.history[0].delay, 45);
+    }
+
+    #[test]
+    fn test_deserialize_traffic() {
+        let json = r#"{"up": 102400, "down": 204800}"#;
+        let traffic: Traffic = serde_json::from_str(json).unwrap();
+        assert_eq!(traffic.up, 102400);
+        assert_eq!(traffic.down, 204800);
+    }
+
+    #[test]
+    fn test_deserialize_connections_response() {
+        let json = r#"{
+            "connections": [{
+                "id": "abc-123",
+                "metadata": {
+                    "network": "tcp",
+                    "type": "tcp",
+                    "sourceIP": "192.168.1.5",
+                    "destinationIP": "142.250.80.46",
+                    "sourcePort": "52341",
+                    "destinationPort": "443",
+                    "host": "google.com",
+                    "dnsMode": "normal",
+                    "processPath": "/usr/bin/curl"
+                },
+                "upload": 1024,
+                "download": 20480,
+                "start": "2026-06-08T12:00:00Z",
+                "chains": ["🇯🇵 Japan-01"],
+                "rule": "DOMAIN,google.com",
+                "rulePayload": "google.com"
+            }],
+            "downloadTotal": 1048576,
+            "uploadTotal": 524288
+        }"#;
+        let resp: ConnectionsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.connections.len(), 1);
+        let conn = &resp.connections[0];
+        assert_eq!(conn.id, "abc-123");
+        assert_eq!(conn.metadata.host, "google.com");
+        assert_eq!(conn.chains[0], "🇯🇵 Japan-01");
+    }
+
+    #[test]
+    fn test_deserialize_rule() {
+        let json = r#"{"type": "DOMAIN-SUFFIX", "payload": "google.com", "proxy": "🔍 Google"}"#;
+        let rule: Rule = serde_json::from_str(json).unwrap();
+        assert_eq!(rule.rule_type, "DOMAIN-SUFFIX");
+        assert_eq!(rule.payload, "google.com");
+    }
+
+    #[test]
+    fn test_deserialize_log_entry() {
+        let json = r#"{"type": "info", "payload": "new connection: google.com:443"}"#;
+        let entry: LogEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.level, "info");
+    }
+}
+```
+
+- [ ] **Step 3: Run tests**
+
+```bash
+cargo test
+```
+
+Expected: 5 tests pass.
+
+- [ ] **Step 4: Verify compiles**
 
 ```bash
 cargo check
@@ -429,10 +532,10 @@ cargo check
 
 Expected: Compiles successfully.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add -A && git commit -m "feat: add mihomo API response types"
+git add -A && git commit -m "feat: add mihomo API response types with deserialization tests"
 ```
 
 ---
@@ -1018,13 +1121,54 @@ impl MioctlConfig {
         self.subscriptions.items.len() < len_before
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = MioctlConfig::default();
+        assert_eq!(config.mihomo.external_controller, "127.0.0.1:9090");
+        assert_eq!(config.mihomo.secret, "");
+        assert_eq!(config.subscriptions.update_interval_minutes, 240);
+        assert!(config.subscriptions.items.is_empty());
+        assert_eq!(config.preferences.delay_test_url, "https://www.gstatic.com/generate_204");
+    }
+
+    #[test]
+    fn test_add_remove_subscription() {
+        let mut config = MioctlConfig::default();
+        config.add_subscription("test-sub".into(), "https://example.com/sub".into());
+        assert_eq!(config.subscriptions.items.len(), 1);
+        assert_eq!(config.subscriptions.items[0].name, "test-sub");
+        assert!(config.remove_subscription("test-sub"));
+        assert!(config.subscriptions.items.is_empty());
+        assert!(!config.remove_subscription("nonexistent"));
+    }
+
+    #[test]
+    fn test_toml_roundtrip() {
+        let mut config = MioctlConfig::default();
+        config.add_subscription("my-sub".into(), "https://example.com/sub".into());
+        config.preferences.delay_test_url = "http://localhost/test".into();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: MioctlConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.subscriptions.items.len(), 1);
+        assert_eq!(deserialized.subscriptions.items[0].name, "my-sub");
+        assert_eq!(deserialized.preferences.delay_test_url, "http://localhost/test");
+    }
+}
 ```
 
-- [ ] **Step 2: Verify compiles**
+- [ ] **Step 2: Run config tests and verify compiles**
 
 ```bash
+cargo test config
 cargo check
 ```
+
+Expected: 3 tests pass, compiles successfully.
 
 - [ ] **Step 3: Commit**
 
@@ -1272,17 +1416,64 @@ impl ConnectionManager {
 }
 ```
 
-- [ ] **Step 3: Verify compiles**
+- [ ] **Step 3: Write unit tests for ProxyManager**
 
-```bash
-cargo check
+Add at the bottom of `src/app/proxy_manager.rs`:
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::types::Group;
+
+    fn make_group(now: &str) -> Group {
+        Group {
+            name: "GLOBAL".into(),
+            group_type: "Selector".into(),
+            now: Some(now.into()),
+            all: vec![now.into(), "DIRECT".into()],
+        }
+    }
+
+    #[test]
+    fn test_detect_proxy_mode_global() {
+        let groups = vec![make_group("GLOBAL")];
+        assert_eq!(ProxyManager::detect_proxy_mode(&groups), ProxyMode::Global);
+    }
+
+    #[test]
+    fn test_detect_proxy_mode_direct() {
+        let groups = vec![make_group("DIRECT")];
+        assert_eq!(ProxyManager::detect_proxy_mode(&groups), ProxyMode::Direct);
+    }
+
+    #[test]
+    fn test_detect_proxy_mode_rule() {
+        let groups = vec![make_group("🇯🇵 Japan-01")];
+        assert_eq!(ProxyManager::detect_proxy_mode(&groups), ProxyMode::Rule);
+    }
+
+    #[test]
+    fn test_detect_proxy_mode_no_global_group() {
+        let groups = vec![Group {
+            name: "YouTube".into(),
+            group_type: "Selector".into(),
+            now: Some("DIRECT".into()),
+            all: vec!["DIRECT".into()],
+        }];
+        assert_eq!(ProxyManager::detect_proxy_mode(&groups), ProxyMode::Rule);
+    }
+}
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Run proxy manager tests**
 
 ```bash
-git add -A && git commit -m "feat: implement ProxyManager and ConnectionManager"
+cargo test proxy_manager
 ```
+
+Expected: 4 tests pass.
+
+- [ ] **Step 5: Verify compiles**
 
 ---
 
@@ -1505,17 +1696,159 @@ fn parse_trojan(url: &Url) -> Option<ParsedNode> {
 }
 ```
 
-- [ ] **Step 2: Verify compiles**
+- [ ] **Step 2: Write comprehensive parser unit tests**
 
-```bash
-cargo check
+Add at the bottom of `src/subscription/parser.rs`:
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === Format Detection ===
+
+    #[test]
+    fn test_detect_yaml_format() {
+        let content = "proxies:\n  - name: \"test\"\n    type: ss\n    server: 1.2.3.4\n    port: 443";
+        assert!(matches!(detect_format(content), SubscriptionFormat::Yaml));
+    }
+
+    #[test]
+    fn test_detect_plain_uri_ss() {
+        let content = "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNzd29yZA@1.2.3.4:8388#Test";
+        assert!(matches!(detect_format(content), SubscriptionFormat::PlainUri));
+    }
+
+    #[test]
+    fn test_detect_base64() {
+        // "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNz@1.2.3.4:8388#B64" in base64
+        let lines = "c3M6Ly9ZMmhoWTJoaE1qQXR",  // partial but triggers base64 path
+        assert!(matches!(detect_format(lines), SubscriptionFormat::PlainUri));
+    }
+
+    // === YAML Parsing ===
+
+    #[test]
+    fn test_parse_yaml_valid() {
+        let yaml = r#"
+proxies:
+  - name: "🇯🇵 Japan"
+    type: ss
+    server: jp.example.com
+    port: 443
+    cipher: aes-256-gcm
+    password: "secret123"
+    udp: true
+  - name: "🇸🇬 Singapore"
+    type: vmess
+    server: sg.example.com
+    port: 8080
+    uuid: "b831381d-6324-4d53-ad4f-8cda48b30811"
+    alterId: 0
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        Host: sg.example.com
+"#;
+        let nodes = parse_yaml(yaml).unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].name, "🇯🇵 Japan");
+        assert_eq!(nodes[0].node_type, "ss");
+        assert_eq!(nodes[0].server, "jp.example.com");
+        assert_eq!(nodes[0].port, 443);
+        assert_eq!(nodes[0].cipher.as_deref(), Some("aes-256-gcm"));
+        assert_eq!(nodes[0].password.as_deref(), Some("secret123"));
+
+        assert_eq!(nodes[1].name, "🇸🇬 Singapore");
+        assert_eq!(nodes[1].node_type, "vmess");
+        assert_eq!(nodes[1].uuid.as_deref(), Some("b831381d-6324-4d53-ad4f-8cda48b30811"));
+    }
+
+    #[test]
+    fn test_parse_yaml_empty() {
+        let yaml = "proxies: []\n";
+        let nodes = parse_yaml(yaml).unwrap();
+        assert!(nodes.is_empty());
+    }
+
+    // === URI Parsing ===
+
+    #[test]
+    fn test_parse_ss_uri() {
+        // ss://base64(method:password)@server:port#name
+        // base64("aes-256-gcm:test123") = "YWVzLTI1Ni1nY206dGVzdDEyMw=="
+        let uri = "ss://YWVzLTI1Ni1nY206dGVzdDEyMw==@1.2.3.4:8388#TestNode";
+        let nodes = parse_uri_list(uri).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "TestNode");
+        assert_eq!(nodes[0].node_type, "ss");
+        assert_eq!(nodes[0].server, "1.2.3.4");
+        assert_eq!(nodes[0].port, 8388);
+        assert_eq!(nodes[0].cipher.as_deref(), Some("aes-256-gcm"));
+        assert_eq!(nodes[0].password.as_deref(), Some("test123"));
+    }
+
+    #[test]
+    fn test_parse_trojan_uri() {
+        let uri = "trojan://password123@trojan.example.com:443?sni=example.com#TrojanNode";
+        let nodes = parse_uri_list(uri).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "TrojanNode");
+        assert_eq!(nodes[0].node_type, "trojan");
+        assert_eq!(nodes[0].server, "trojan.example.com");
+        assert_eq!(nodes[0].port, 443);
+        assert_eq!(nodes[0].password.as_deref(), Some("password123"));
+        assert_eq!(nodes[0].sni.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_parse_vmess_uri() {
+        let vmess_json = r#"{"ps":"VmessNode","add":"vm.example.com","port":"443","id":"b831381d-6324-4d53-ad4f-8cda48b30811","aid":"0","net":"ws","type":"auto","host":"vm.example.com","path":"/ws","tls":"tls"}"#;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(vmess_json);
+        let uri = format!("vmess://{}", encoded);
+        let nodes = parse_uri_list(&uri).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "VmessNode");
+        assert_eq!(nodes[0].node_type, "vmess");
+        assert_eq!(nodes[0].server, "vm.example.com");
+        assert_eq!(nodes[0].port, 443);
+        assert_eq!(nodes[0].uuid.as_deref(), Some("b831381d-6324-4d53-ad4f-8cda48b30811"));
+        assert_eq!(nodes[0].network.as_deref(), Some("ws"));
+    }
+
+    #[test]
+    fn test_parse_multiline_uri_list() {
+        let content = "ss://YWVzLTI1Ni1nY206dGVzdDEyMw==@1.2.3.4:8388#Node1\ntrojan://pass@5.6.7.8:443#Node2\n\n# comment line\n";
+        let nodes = parse_uri_list(content).unwrap();
+        assert_eq!(nodes.len(), 2);
+    }
+
+    // === Base64 Parsing ===
+
+    #[test]
+    fn test_parse_base64_subscription() {
+        let plain = "ss://YWVzLTI1Ni1nY206dGVzdDEyMw==@1.2.3.4:8388#B64Node";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(plain);
+        let nodes = parse_base64(&encoded).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "B64Node");
+    }
+
+    #[test]
+    fn test_parse_base64_invalid() {
+        let result = parse_base64("!!!not valid base64!!!");
+        assert!(result.is_err());
+    }
+}
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Run parser tests**
 
 ```bash
-git add -A && git commit -m "feat: implement subscription parser (YAML/Base64/URI)"
+cargo test parser
 ```
+
+Expected: 10 tests pass.
 
 ---
 
@@ -1691,9 +2024,93 @@ impl SubscriptionManager {
 }
 ```
 
-- [ ] **Step 4: Verify compiles**
+- [ ] **Step 4: Write injector unit tests**
 
-The subscription manager references chrono::Utc. Add to `Cargo.toml` if needed:
+Add at the bottom of `src/subscription/injector.rs`:
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::types::ParsedNode;
+
+    fn sample_node() -> ParsedNode {
+        ParsedNode {
+            name: "🇯🇵 Test".into(),
+            node_type: "ss".into(),
+            server: "1.2.3.4".into(),
+            port: 443,
+            cipher: Some("aes-256-gcm".into()),
+            password: Some("secret".into()),
+            uuid: None,
+            alter_id: None,
+            network: None,
+            ws_opts: None,
+            sni: None,
+            skip_cert_verify: None,
+            udp: Some(true),
+        }
+    }
+
+    #[test]
+    fn test_generate_provider_yaml_single_node() {
+        let nodes = vec![sample_node()];
+        let yaml = generate_provider_yaml("test", &nodes);
+        assert!(yaml.contains("proxies:"));
+        assert!(yaml.contains("name: \"🇯🇵 Test\""));
+        assert!(yaml.contains("type: ss"));
+        assert!(yaml.contains("server: 1.2.3.4"));
+        assert!(yaml.contains("port: 443"));
+        assert!(yaml.contains("cipher: aes-256-gcm"));
+        assert!(yaml.contains("password: \"secret\""));
+        assert!(yaml.contains("udp: true"));
+    }
+
+    #[test]
+    fn test_generate_provider_yaml_vmess_node() {
+        let nodes = vec![ParsedNode {
+            name: "Vmess Node".into(),
+            node_type: "vmess".into(),
+            server: "vm.example.com".into(),
+            port: 8080,
+            uuid: Some("b831381d-6324-4d53-ad4f-8cda48b30811".into()),
+            alter_id: Some(0),
+            network: Some("ws".into()),
+            ws_opts: Some(serde_json::json!({
+                "path": "/ws",
+                "headers": {"Host": "vm.example.com"}
+            })),
+            cipher: None,
+            password: None,
+            sni: Some("vm.example.com".into()),
+            skip_cert_verify: Some(true),
+            udp: Some(true),
+        }];
+        let yaml = generate_provider_yaml("test", &nodes);
+        assert!(yaml.contains("type: vmess"));
+        assert!(yaml.contains("uuid: b831381d-6324-4d53-ad4f-8cda48b30811"));
+        assert!(yaml.contains("alterId: 0"));
+        assert!(yaml.contains("network: ws"));
+        assert!(yaml.contains("path: /ws"));
+        assert!(yaml.contains("skip-cert-verify: true"));
+    }
+
+    #[test]
+    fn test_generate_provider_yaml_empty_nodes() {
+        let yaml = generate_provider_yaml("empty", &[]);
+        assert_eq!(yaml, "proxies:\n");
+    }
+}
+```
+
+- [ ] **Step 5: Run injector tests**
+
+```bash
+cargo test injector
+```
+
+Expected: 3 tests pass.
+
+- [ ] **Step 6: Verify compiles and commit**
 ```bash
 cargo check
 ```
@@ -2034,17 +2451,100 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
 }
 ```
 
-- [ ] **Step 3: Verify compiles**
+- [ ] **Step 3: Write keybinding unit tests**
 
-```bash
-cargo check
+Add at the bottom of `src/ui/keybindings.rs`:
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    fn key_char_shift(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+    }
+
+    #[test]
+    fn test_parse_quit() {
+        assert_eq!(parse_key(key_char('q')), Some(Action::Quit));
+    }
+
+    #[test]
+    fn test_parse_view_switching() {
+        assert_eq!(parse_key(key_char('1')), Some(Action::SwitchView(0)));
+        assert_eq!(parse_key(key_char('2')), Some(Action::SwitchView(1)));
+        assert_eq!(parse_key(key_char('5')), Some(Action::SwitchView(4)));
+    }
+
+    #[test]
+    fn test_parse_navigation() {
+        assert_eq!(parse_key(key_char('j')), Some(Action::MoveDown));
+        assert_eq!(parse_key(key_char('k')), Some(Action::MoveUp));
+        assert_eq!(parse_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)), Some(Action::MoveDown));
+        assert_eq!(parse_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)), Some(Action::MoveUp));
+    }
+
+    #[test]
+    fn test_parse_jump() {
+        assert_eq!(parse_key(key_char('g')), Some(Action::JumpTop));
+        assert_eq!(parse_key(key_char_shift('G')), Some(Action::JumpBottom));
+    }
+
+    #[test]
+    fn test_parse_search() {
+        assert_eq!(parse_key(key_char('/')), Some(Action::Search));
+        assert_eq!(parse_key(key_char('n')), Some(Action::SearchNext));
+        assert_eq!(parse_key(key_char_shift('N')), Some(Action::SearchPrev));
+    }
+
+    #[test]
+    fn test_parse_dashboard() {
+        assert_eq!(parse_key(key_char('m')), Some(Action::CycleMode));
+    }
+
+    #[test]
+    fn test_parse_proxies() {
+        assert_eq!(parse_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(Action::SwitchNode));
+        assert_eq!(parse_key(key_char('t')), Some(Action::TestNodeDelay));
+        assert_eq!(parse_key(key_char_shift('T')), Some(Action::TestNodeDelay));
+        assert_eq!(parse_key(key_char('h')), Some(Action::PrevGroup));
+        assert_eq!(parse_key(key_char('l')), Some(Action::NextGroup));
+        assert_eq!(parse_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)), Some(Action::Back));
+    }
+
+    #[test]
+    fn test_parse_connections() {
+        assert_eq!(parse_key(key_char('d')), Some(Action::CloseConnection));
+        assert_eq!(parse_key(key_char_shift('D')), Some(Action::CloseAllConnections));
+    }
+
+    #[test]
+    fn test_parse_logs() {
+        assert_eq!(parse_key(key_char(' ')), Some(Action::TogglePause));
+        assert_eq!(parse_key(key_char('s')), Some(Action::CycleLogLevel));
+    }
+
+    #[test]
+    fn test_parse_unknown_key_returns_none() {
+        assert_eq!(parse_key(key_char('z')), None);
+        assert_eq!(parse_key(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE)), None);
+    }
+}
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Run keybinding tests**
 
 ```bash
-git add -A && git commit -m "feat: implement Catppuccin Mocha theme and vim keybindings"
+cargo test keybindings
 ```
+
+Expected: 10 tests pass.
+
+- [ ] **Step 5: Commit**
 
 ---
 
@@ -3162,10 +3662,251 @@ git add -A && git commit -m "feat: integrate WebSocket real-time data streams"
 
 ---
 
-### Task 19: Final integration — main entry, README, CI
+### Task 19: Integration tests with wiremock
 
 **Files:**
-- Modify: `src/main.rs` (already done in Task 11)
+- Create: `tests/integration_test.rs`
+
+- [ ] **Step 1: Create integration test directory and file**
+
+```bash
+mkdir -p tests
+```
+
+Write `tests/integration_test.rs`:
+```rust
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use mioctl::api::client::MihomoClient;
+use mioctl::api::types::*;
+
+#[tokio::test]
+async fn test_get_version() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/version"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "version": "mihomo v1.18.0"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let version = client.get_version().await.unwrap();
+    assert_eq!(version.version, "mihomo v1.18.0");
+}
+
+#[tokio::test]
+async fn test_get_proxies() {
+    let server = MockServer::start().await;
+
+    let mock_body = serde_json::json!({
+        "proxies": {
+            "GLOBAL": {
+                "name": "GLOBAL",
+                "type": "Selector",
+                "now": "DIRECT",
+                "all": ["DIRECT", "🇯🇵 Japan"],
+                "history": [],
+                "udp": true,
+                "alive": true
+            }
+        }
+    });
+
+    Mock::given(method("GET"))
+        .and(path("/proxies"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_body))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let resp = client.get_proxies().await.unwrap();
+    assert!(resp.proxies.contains_key("GLOBAL"));
+}
+
+#[tokio::test]
+async fn test_get_connections() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/connections"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "connections": [],
+            "downloadTotal": 0,
+            "uploadTotal": 0
+        })))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let resp = client.get_connections().await.unwrap();
+    assert!(resp.connections.is_empty());
+}
+
+#[tokio::test]
+async fn test_select_proxy() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/proxies/GLOBAL"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let result = client.select_proxy("GLOBAL", "🇯🇵 Japan").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_close_connection() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/connections/abc-123"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let result = client.close_connection("abc-123").await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_close_all_connections() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/connections"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let result = client.close_all_connections().await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_get_rules() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/rules"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rules": [
+                {"type": "DOMAIN-SUFFIX", "payload": "google.com", "proxy": "🔍 Google"}
+            ]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let resp = client.get_rules().await.unwrap();
+    assert_eq!(resp.rules.len(), 1);
+    assert_eq!(resp.rules[0].payload, "google.com");
+}
+
+#[tokio::test]
+async fn test_get_traffic() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/traffic"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "up": 102400,
+            "down": 204800
+        })))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let traffic = client.get_traffic().await.unwrap();
+    assert_eq!(traffic.up, 102400);
+    assert_eq!(traffic.down, 204800);
+}
+
+#[tokio::test]
+async fn test_get_configs() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/configs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "port": 7890,
+            "mixed-port": 7890,
+            "mode": "rule",
+            "log-level": "info"
+        })))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let config = client.get_configs().await.unwrap();
+    assert_eq!(config.mode.as_deref(), Some("rule"));
+}
+
+#[tokio::test]
+async fn test_reload_config() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let result = client.reload_config(None).await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_api_error_handling() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/proxies"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let result = client.get_proxies().await;
+    assert!(result.is_err());
+}
+```
+
+- [ ] **Step 2: Run integration tests**
+
+```bash
+cargo test --test integration_test
+```
+
+Expected: 11 tests pass with wiremock-backed responses.
+
+- [ ] **Step 3: Run all unit + integration tests**
+
+```bash
+cargo test
+```
+
+Expected: ~40+ tests pass across all modules.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A && git commit -m "test: add wiremock-backed integration tests for API client"
+```
+
+---
+
+### Task 20: README, CI, and final polish
+
+**Files:**
 - Create: `README.md`
 - Create: `.github/workflows/ci.yml`
 
