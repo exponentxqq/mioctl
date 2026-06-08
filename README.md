@@ -1,74 +1,196 @@
 # mioctl
 
-Terminal UI management tool for [mihomo](https://github.com/MetaCubeX/mihomo) (Clash.Meta).
+基于 [mihomo](https://github.com/MetaCubeX/mihomo)（Clash.Meta）的终端管理工具，提供交互式 TUI 界面，支持完整的 REST API 操作和订阅管理。
 
-## Features
+## 功能特性
 
-- Interactive TUI with sidebar navigation (Dashboard, Proxies, Connections, Rules, Logs)
-- Full mihomo REST API integration
-- Subscription management via URL (YAML / Base64 / URI format support)
-- Proxy node switching, latency testing, health checks
-- Vim-style keybindings, Catppuccin Mocha theme
+- **交互式 TUI** — 侧边栏导航，5 个视图（概览、代理、连接、规则、日志）
+- **完整 API 封装** — 所有 mihomo REST 端点，WebSocket 实时数据流
+- **订阅管理** — URL 添加/更新/删除，自动识别格式并注入 proxy-provider
+- **代理控制** — 策略组浏览、节点切换、延迟测试、模式切换
+- **Vim 风格快捷键**，Catppuccin Mocha 配色
 
-## Installation
+## 安装
 
 ```bash
 cargo install --path .
 ```
 
-## Quick Start
+## 快速开始
 
-1. Ensure mihomo is running with `external-controller` enabled:
-   ```yaml
-   external-controller: 127.0.0.1:9090
-   secret: "your-secret"
-   ```
+### 1. 确保 mihomo 已启动
 
-2. Launch TUI:
-   ```bash
-   mioctl tui
-   ```
+在 mihomo 配置中启用外部控制器：
 
-3. Test connectivity:
-   ```bash
-   mioctl connect test
-   ```
+```yaml
+external-controller: 127.0.0.1:9090
+secret: "你的密钥"   # 可选
+```
 
-4. Update subscriptions:
-   ```bash
-   mioctl sub update --all
-   ```
+### 2. 连接测试
 
-## Configuration
+```bash
+mioctl connect test
+```
 
-`~/.config/mioctl/config.toml`:
+输出 `✓ Connected to mihomo v1.18.0` 表示连接成功。
+
+### 3. 启动 TUI
+
+```bash
+mioctl tui
+```
+
+### 4. 管理订阅
+
+```bash
+# 添加订阅（在配置文件中手动添加，暂无 CLI 添加命令）
+# 编辑 ~/.config/mioctl/config.toml
+
+# 更新全部订阅
+mioctl sub update --all
+```
+
+## 配置文件
+
+配置文件位于 `~/.config/mioctl/config.toml`，首次运行自动创建：
+
 ```toml
 [mihomo]
+# mihomo 外部控制器地址
 external-controller = "127.0.0.1:9090"
+# API 密钥（与 mihomo 配置中的 secret 一致）
 secret = ""
 
 [subscriptions]
+# 自动更新间隔（分钟），默认 240
 update-interval-minutes = 240
+
 [[subscriptions.items]]
-name = "example"
-url = "https://example.com/sub"
+name = "我的机场"
+url = "https://example.com/api/v1/client/xxxxxxxx"
+
+[[subscriptions.items]]
+name = "免费节点"
+url = "https://free.example.com/sub"
 ```
 
-## Keybindings
+## 快捷键
 
-| Key | Action |
-|-----|--------|
-| `1-5` | Switch view |
-| `j/k` | Navigate up/down |
-| `g` / `G` | Jump top / bottom |
-| `h/l` | Prev/next group (Proxies view) |
-| `Enter` | Switch to selected node |
-| `t` | Test node latency |
-| `d` / `D` | Close connection / all |
-| `Space` | Pause logs |
-| `:` | Command mode |
-| `q` | Quit |
+### 全局
 
-## License
+| 按键 | 功能 |
+|------|------|
+| `1` `2` `3` `4` `5` | 切换视图（概览/代理/连接/规则/日志） |
+| `j` / `k` 或 `↑` / `↓` | 上下移动 |
+| `g` | 跳到顶部 |
+| `G` | 跳到底部 |
+| `/` | 搜索 / 过滤 |
+| `n` / `N` | 下一个 / 上一个搜索结果 |
+| `:` | 命令模式 |
+| `q` | 退出 |
+
+### 概览视图
+
+| 按键 | 功能 |
+|------|------|
+| `m` | 切换代理模式（全局 → 规则 → 直连 循环） |
+
+### 代理视图
+
+| 按键 | 功能 |
+|------|------|
+| `h` / `l` 或 `←` / `→` | 切换上一个 / 下一个策略组 |
+| `Enter` | 切换到选中的节点 |
+| `t` | 测试当前节点延迟 |
+| `T` | 测试当前策略组全部节点延迟 |
+| `Esc` | 从节点列表回到策略组列表 |
+
+### 连接视图
+
+| 按键 | 功能 |
+|------|------|
+| `d` | 关闭选中的连接 |
+| `D` | 关闭全部连接 |
+
+### 日志视图
+
+| 按键 | 功能 |
+|------|------|
+| `Space` | 暂停 / 恢复实时滚动 |
+| `s` | 切换日志级别过滤（info → warning → error → debug → 全部） |
+
+## 视图说明
+
+### 📊 概览
+默认视图，展示代理模式、实时上下行流量速率、活跃连接数、流量趋势图（Sparkline）、内存使用和 mihomo 版本。
+
+### 🔗 代理
+左侧策略组列表，右侧节点详情表格。显示节点名称、类型、延迟和选中状态。支持即时切换和延迟测试。
+
+### 🌐 连接
+所有活跃连接表格。显示源地址、目标地址、代理链路、匹配规则和流量。支持关闭单个或全部连接。
+
+### 📋 规则
+路由规则列表，包含规则类型、匹配条件和目标策略。
+
+### 📜 日志
+实时滚动日志流，按日志级别着色（info=绿、warning=黄、error=红、debug=灰）。支持暂停和级别过滤。
+
+## 支持的订阅格式
+
+mioctl 自动检测并解析以下订阅格式：
+
+| 格式 | 说明 |
+|------|------|
+| Clash YAML 配置 | 完整的 mihomo/clash 配置文件，自动提取 `proxies:` 部分 |
+| Base64 编码列表 | 常见于机场订阅，解码后逐行解析节点 URI |
+| 纯文本 URI 列表 | 每行一个代理节点 URI |
+
+支持的节点协议：Shadowsocks (`ss://`)、Vmess (`vmess://`)、Trojan (`trojan://`)
+
+## 命令行
+
+```
+mioctl tui              启动交互式 TUI
+mioctl connect test     测试 API 连接
+mioctl sub update --all 更新全部订阅
+```
+
+## 项目结构
+
+```
+~/.config/mioctl/
+├── config.toml           # mioctl 配置
+└── providers/            # 生成的 proxy-provider 文件
+    └── my-sub.yaml
+```
+
+## 常见问题
+
+**Q: 启动 TUI 后显示 disconnected？**
+A: 检查 mihomo 是否已启动且 `external-controller` 配置正确。运行 `mioctl connect test` 验证。
+
+**Q: 订阅更新失败？**
+A: 检查订阅 URL 是否可访问。部分订阅需要特定 User-Agent（mioctl 使用 `clash-verge/1.3.8`），或服务器使用自签名证书（mioctl 已支持）。
+
+**Q: 如何添加新的订阅？**
+A: 在 `~/.config/mioctl/config.toml` 的 `[[subscriptions.items]]` 段中添加 name 和 url，然后运行 `mioctl sub update --all`。
+
+**Q: 节点切换后不生效？**
+A: 节点切换通过 mihomo API 即时生效。确保你在正确的策略组中切换。
+
+## 开发
+
+```bash
+# 运行所有测试
+cargo test --bin mioctl          # 36 个单元测试
+cargo test --test integration_test  # 11 个集成测试
+
+# 编译发布版本
+cargo build --release
+```
+
+## 许可
 
 MIT
