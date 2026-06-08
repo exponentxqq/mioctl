@@ -28,6 +28,7 @@ impl MihomoClient {
         let client = Client::builder()
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(30))
+            .danger_accept_invalid_certs(true)
             .build()?;
 
         Ok(Self { client, base_url })
