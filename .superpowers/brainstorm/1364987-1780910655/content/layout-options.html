@@ -1,0 +1,75 @@
+<h2>mioctl TUI 布局方案</h2>
+<p class="subtitle">哪种整体布局最适合这个 mihomo 管理工具？考虑使用场景：快速查看状态、切换节点、排查连接问题。</p>
+
+<div class="options">
+  <div class="option" data-choice="tabbed" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Tab 切换布局</h3>
+      <p>顶部固定 Tab 栏，下方为内容区。类似 htop/btm 风格。最经典的 TUI 导航模式，键盘操作直觉（← → 切 Tab）。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="sidebar" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>侧边栏 + 主区域</h3>
+      <p>左侧固定导航栏，右侧为主内容区域。类似 lazygit 风格。可同时看到导航和内容，切换视图无需离开当前位置上下文。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="single-dashboard" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>单页仪表盘</h3>
+      <p>所有信息在一个可滚动页面中，按区块排列（概览 → 节点 → 连接 → 日志）。一屏看全貌，但内容多时需要滚动。</p>
+    </div>
+  </div>
+</div>
+
+<h3>布局示意图</h3>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">A: Tab 布局</div>
+    <div class="mockup-body">
+      <div style="display:flex;gap:2px;margin-bottom:8px;border-bottom:2px solid #7c3aed;padding-bottom:4px;">
+        <span style="background:#7c3aed;color:white;padding:2px 10px;font-size:11px;">📊 概览</span>
+        <span style="padding:2px 10px;font-size:11px;opacity:0.5;">🔗 代理</span>
+        <span style="padding:2px 10px;font-size:11px;opacity:0.5;">🌐 连接</span>
+        <span style="padding:2px 10px;font-size:11px;opacity:0.5;">📋 规则</span>
+        <span style="padding:2px 10px;font-size:11px;opacity:0.5;">📜 日志</span>
+      </div>
+      <div class="placeholder" style="min-height:120px;">内容区域动态切换</div>
+      <div style="margin-top:8px;font-size:10px;opacity:0.5;">🟢 已连接 | 更新: 12:30:45 | Tab/1-5 切换视图</div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">B: 侧边栏布局</div>
+    <div class="mockup-body">
+      <div style="display:flex;">
+        <div class="mock-sidebar" style="min-width:80px;">
+          <div style="font-weight:bold;margin-bottom:4px;">📊 概览</div>
+          <div style="margin-bottom:4px;opacity:0.7;">🔗 代理</div>
+          <div style="margin-bottom:4px;opacity:0.7;">🌐 连接</div>
+          <div style="margin-bottom:4px;opacity:0.7;">📋 规则</div>
+          <div style="opacity:0.7;">📜 日志</div>
+        </div>
+        <div class="placeholder" style="flex:1;min-height:120px;">主内容区域<br><span style="font-size:10px;">侧边栏始终可见</span></div>
+      </div>
+      <div style="margin-top:8px;font-size:10px;opacity:0.5;">🟢 已连接 | 更新: 12:30:45 | j/k 切换视图</div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:16px;">
+  <div class="mockup-header">C: 单页仪表盘</div>
+  <div class="mockup-body">
+    <div style="font-size:10px;opacity:0.5;margin-bottom:4px;">▼ 代理状态 (⬆ 24.3kbps ⬇ 128.7kbps | 模式: Rule)</div>
+    <div class="placeholder" style="min-height:25px;">📊 概览区块</div>
+    <div style="font-size:10px;opacity:0.5;">▼ 代理节点</div>
+    <div class="placeholder" style="min-height:25px;">🔗 节点列表面板</div>
+    <div style="font-size:10px;opacity:0.5;">▼ 活跃连接 (12)</div>
+    <div class="placeholder" style="min-height:25px;">🌐 连接表格 (可滚动)</div>
+    <div style="font-size:10px;opacity:0.5;margin-top:2px;">🟢 已连接 | ↑↓ 滚动 | Tab 聚焦区块</div>
+  </div>
+</div>

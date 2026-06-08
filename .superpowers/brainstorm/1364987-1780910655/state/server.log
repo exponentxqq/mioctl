@@ -1,0 +1,7 @@
+{"type":"server-started","port":51312,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:51312","screen_dir":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content","state_dir":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/state"}
+{"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/layout-options.html"}
+{"source":"user-event","type":"click","text":"B\n    \n      侧边栏 + 主区域\n      左侧固定导航栏，右侧为主内容区域。类似 lazygit 风格。可同时看到导航和内容，切换视图无需离开当前位置上下文。","choice":"sidebar","id":null,"timestamp":1780910775341}
+{"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/view-details.html"}
+{"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/waiting.html"}
+{"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/color-themes.html"}
+{"source":"user-event","type":"click","text":"C\n    \n      Catppuccin Mocha\n      社区流行的 Catppuccin 配色。柔和的粉彩调，长时间使用不刺眼，符合现代终端审美（helix/fish/yazi 等工具标准配色）。","choice":"catppuccin","id":null,"timestamp":1780911059777}

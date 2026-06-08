@@ -1,0 +1,106 @@
+<h2>mioctl TUI 配色方案</h2>
+<p class="subtitle">选一个配色方向。会影响整个终端界面的观感。这里展示概览视图在三种主题下的效果。</p>
+
+<div class="options">
+  <div class="option" data-choice="mihomo-purple" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Mihomo 品牌紫</h3>
+      <p>深色底 + 紫色主题色（#7c3aed），搭配绿色/粉色流量指示。贴近 mihomo 品牌的紫色调，辨识度高。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="cyber-green" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>赛博绿色</h3>
+      <p>纯黑底 + 终端绿（#22c55e），黑客帝国/Matrix 风格。适合暗光环境，眼睛负担小。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="catppuccin" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Catppuccin Mocha</h3>
+      <p>社区流行的 Catppuccin 配色。柔和的粉彩调，长时间使用不刺眼，符合现代终端审美（helix/fish/yazi 等工具标准配色）。</p>
+    </div>
+  </div>
+</div>
+
+<h3>实际效果预览</h3>
+
+<div class="mockup" style="margin-bottom:12px;">
+  <div class="mockup-header">A: Mihomo 品牌紫 — 深色 #0f0f1a 底 + 紫色强调</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;background:#0f0f1a;color:#c8c8d0;padding:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <div style="flex:1;background:#1a1a2e;padding:6px;text-align:center;border-left:3px solid #7c3aed;">
+        <div style="opacity:0.5;">代理模式</div>
+        <div style="color:#a78bfa;font-size:14px;font-weight:bold;">RULE</div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:6px;text-align:center;">
+        <div style="opacity:0.5;">⬆ 上传</div>
+        <div style="color:#34d399;font-size:13px;">24.3 KB/s</div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:6px;text-align:center;">
+        <div style="opacity:0.5;">⬇ 下载</div>
+        <div style="color:#f472b6;font-size:13px;">128.7 KB/s</div>
+      </div>
+    </div>
+    <div style="background:#1a1a2e;padding:6px;font-size:9px;">
+      <div style="opacity:0.5;margin-bottom:2px;">📈 流量趋势</div>
+      <span style="color:#34d399;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span>
+      <br><span style="color:#f472b6;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span>
+    </div>
+    <div style="font-size:9px;opacity:0.5;margin-top:4px;">🟢 已连接 mihomo v1.18.0 | 内存 42.3 MB | 更新: 12:30:45</div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-bottom:12px;">
+  <div class="mockup-header">B: 赛博绿色 — 纯黑 #000 底 + 终端绿强调</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;background:#000;color:#22c55e;padding:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <div style="flex:1;background:#0a0a0a;padding:6px;text-align:center;border-left:3px solid #22c55e;">
+        <div style="opacity:0.5;">代理模式</div>
+        <div style="color:#4ade80;font-size:14px;font-weight:bold;">RULE</div>
+      </div>
+      <div style="flex:1;background:#0a0a0a;padding:6px;text-align:center;">
+        <div style="opacity:0.5;">⬆ 上传</div>
+        <div style="color:#22c55e;font-size:13px;">24.3 KB/s</div>
+      </div>
+      <div style="flex:1;background:#0a0a0a;padding:6px;text-align:center;">
+        <div style="opacity:0.5;">⬇ 下载</div>
+        <div style="color:#86efac;font-size:13px;">128.7 KB/s</div>
+      </div>
+    </div>
+    <div style="background:#0a0a0a;padding:6px;font-size:9px;">
+      <div style="opacity:0.5;margin-bottom:2px;">📈 流量趋势</div>
+      <span>▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span><br>
+      <span>▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span>
+    </div>
+    <div style="font-size:9px;opacity:0.5;margin-top:4px;">🟢 已连接 mihomo v1.18.0 | 内存 42.3 MB | 更新: 12:30:45</div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">C: Catppuccin Mocha — 柔和基底 #1e1e2e + 多色体系</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;background:#1e1e2e;color:#cdd6f4;padding:8px;">
+    <div style="display:flex;gap:8px;margin-bottom:6px;">
+      <div style="flex:1;background:#313244;padding:6px;text-align:center;border-left:3px solid #cba6f7;">
+        <div style="opacity:0.5;color:#a6adc8;">代理模式</div>
+        <div style="color:#cba6f7;font-size:14px;font-weight:bold;">RULE</div>
+      </div>
+      <div style="flex:1;background:#313244;padding:6px;text-align:center;">
+        <div style="opacity:0.5;color:#a6adc8;">⬆ 上传</div>
+        <div style="color:#a6e3a1;font-size:13px;">24.3 KB/s</div>
+      </div>
+      <div style="flex:1;background:#313244;padding:6px;text-align:center;">
+        <div style="opacity:0.5;color:#a6adc8;">⬇ 下载</div>
+        <div style="color:#f38ba8;font-size:13px;">128.7 KB/s</div>
+      </div>
+    </div>
+    <div style="background:#313244;padding:6px;font-size:9px;">
+      <div style="opacity:0.5;color:#a6adc8;margin-bottom:2px;">📈 流量趋势</div>
+      <span style="color:#a6e3a1;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span>
+      <br><span style="color:#f38ba8;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇</span>
+    </div>
+    <div style="font-size:9px;opacity:0.5;color:#a6adc8;margin-top:4px;">🟢 已连接 mihomo v1.18.0 | 内存 42.3 MB | 更新: 12:30:45</div>
+  </div>
+</div>

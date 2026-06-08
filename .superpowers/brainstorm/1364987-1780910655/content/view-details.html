@@ -1,0 +1,164 @@
+<h2>视图详细布局</h2>
+<p class="subtitle">侧边栏布局下，5 个视图（概览/代理/连接/规则/日志）的具体内容设计。</p>
+
+<div style="margin-bottom:16px;">
+  <h3>侧边栏结构</h3>
+  <div class="mockup">
+    <div class="mockup-header">左侧导航栏</div>
+    <div class="mockup-body">
+      <div style="display:flex;flex-direction:column;gap:2px;font-size:12px;">
+        <div style="padding:4px 8px;background:#7c3aed;color:white;">📊 概览</div>
+        <div style="padding:4px 8px;">🔗 代理</div>
+        <div style="padding:4px 8px;">🌐 连接 (12)</div>
+        <div style="padding:4px 8px;">📋 规则 (45)</div>
+        <div style="padding:4px 8px;">📜 日志</div>
+        <div style="margin-top:16px;border-top:1px solid #333;padding:4px 8px;opacity:0.5;">⚙ 设置</div>
+        <div style="padding:4px 8px;opacity:0.5;">🔄 更新订阅</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>概览视图 = 主信息仪表盘</h3>
+<p style="font-size:13px;opacity:0.7;">启动时的默认视图，一眼掌握全局状态。所有数据 1-3 秒自动刷新。</p>
+
+<div class="mockup">
+  <div class="mockup-header">📊 概览 — 默认主视图</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:11px;">
+    <div style="display:flex;gap:12px;margin-bottom:8px;">
+      <div style="flex:1;background:#1a1a2e;padding:8px;text-align:center;">
+        <div style="opacity:0.5;">代理模式</div>
+        <div style="color:#a78bfa;font-size:16px;font-weight:bold;">RULE</div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:8px;text-align:center;">
+        <div style="opacity:0.5;">⬆ 上传</div>
+        <div style="color:#34d399;font-size:14px;">24.3 KB/s</div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:8px;text-align:center;">
+        <div style="opacity:0.5;">⬇ 下载</div>
+        <div style="color:#f472b6;font-size:14px;">128.7 KB/s</div>
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:8px;text-align:center;">
+        <div style="opacity:0.5;">📝 连接</div>
+        <div style="font-size:14px;">12</div>
+      </div>
+    </div>
+    <div style="background:#1a1a2e;padding:8px;margin-bottom:4px;">
+      <div style="opacity:0.5;margin-bottom:4px;">📈 流量趋势 (最近 30s)</div>
+      <div style="color:#34d399;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇  ⬆</div>
+      <div style="color:#f472b6;">▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇  ⬇</div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;background:#1a1a2e;padding:6px;font-size:10px;">
+        <span style="opacity:0.5;">💾 内存</span> 42.3 MB
+      </div>
+      <div style="flex:1;background:#1a1a2e;padding:6px;font-size:10px;">
+        <span style="opacity:0.5;">🔢 版本</span> mihomo v1.18.0
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>代理视图 = 策略组 + 节点操作</h3>
+<p style="font-size:13px;opacity:0.7;">最常用的视图。左侧策略组列表，右侧节点详情。支持搜索过滤。</p>
+
+<div class="mockup">
+  <div class="mockup-header">🔗 代理 — 节点管理</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;">
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;background:#1a1a2e;padding:4px;">
+        <div style="font-weight:bold;margin-bottom:2px;">策略组</div>
+        <div style="background:#7c3aed;padding:2px 4px;">🌍 GLOBAL</div>
+        <div style="padding:2px 4px;">📺 YouTube</div>
+        <div style="padding:2px 4px;">🐦 Twitter</div>
+        <div style="padding:2px 4px;">🔍 Google</div>
+        <div style="padding:2px 4px;">🌐 其他</div>
+      </div>
+      <div style="flex:3;background:#1a1a2e;padding:4px;">
+        <div style="font-weight:bold;margin-bottom:2px;display:flex;justify-content:space-between;">
+          <span>节点 — YouTube</span>
+          <span style="opacity:0.5;">🔍 [搜索...]</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;border-bottom:1px solid #333;padding:2px 0;">
+          <span>名称</span><span>类型</span><span>延迟</span><span></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:2px 0;background:#7c3aed33;">
+          <span>✅ 🇯🇵 日本-01</span><span>ss</span><span style="color:#34d399;">45ms</span><span>*</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:2px 0;">
+          <span>   🇸🇬 新加坡-02</span><span>vmess</span><span style="color:#fbbf24;">120ms</span><span></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:2px 0;">
+          <span>   🇺🇸 美国-03</span><span>trojan</span><span style="color:#ef4444;">TIMEOUT</span><span></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:2px 0;">
+          <span>   🇭🇰 香港-04</span><span>hysteria2</span><span>—</span><span></span>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:9px;opacity:0.5;margin-top:4px;">Enter 切换 | t 测速 | / 搜索 | Ctrl+T 全部测速 | Esc 回策略组</div>
+  </div>
+</div>
+
+<h3>连接视图 = 实时连接表</h3>
+
+<div class="mockup">
+  <div class="mockup-header">🌐 连接 — 活跃连接列表</div>
+  <div class="mockup-body" style="font-family:monospace;font-size:10px;">
+    <div style="background:#1a1a2e;padding:4px;">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid #333;padding:2px 0;font-weight:bold;">
+        <span style="width:25%;">源地址</span>
+        <span style="width:25%;">目标</span>
+        <span style="width:20%;">代理</span>
+        <span style="width:20%;">规则</span>
+        <span style="width:10%;">流量</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;">
+        <span style="width:25%;">192.168.1.5:52341</span>
+        <span style="width:25%;">youtube.com:443</span>
+        <span style="width:20%;">🇯🇵 日本-01</span>
+        <span style="width:20%;">DOMAIN,youtube</span>
+        <span style="width:10%;">2.3MB</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;">
+        <span style="width:25%;">192.168.1.5:52342</span>
+        <span style="width:25%;">github.com:443</span>
+        <span style="width:20%;">DIRECT</span>
+        <span style="width:20%;">MATCH</span>
+        <span style="width:10%;">156KB</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;">
+        <span style="width:25%;">192.168.1.5:52355</span>
+        <span style="width:25%;">google.com:443</span>
+        <span style="width:20%;">🇸🇬 新加坡-02</span>
+        <span style="width:20%;">DOMAIN,google</span>
+        <span style="width:10%;">45KB</span>
+      </div>
+    </div>
+    <div style="font-size:9px;opacity:0.5;margin-top:4px;">d 关闭连接 | D 关闭全部 | / 搜索 | 自动刷新 1s</div>
+  </div>
+</div>
+
+<div style="display:flex;gap:8px;margin-top:12px;">
+  <div class="mockup" style="flex:1;">
+    <div class="mockup-header">📋 规则视图</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:10px;">
+      <div style="padding:2px 0;">DOMAIN-SUFFIX, google.com → 🔍 Google</div>
+      <div style="padding:2px 0;">DOMAIN-KEYWORD, youtube → 📺 YouTube</div>
+      <div style="padding:2px 0;">DOMAIN-SUFFIX, twitter.com → 🐦 Twitter</div>
+      <div style="padding:2px 0;">GEOIP, CN → DIRECT</div>
+      <div style="padding:2px 0;">MATCH → 🌐 其他</div>
+      <div style="font-size:9px;opacity:0.5;margin-top:4px;">只读视图 | / 搜索过滤</div>
+    </div>
+  </div>
+  <div class="mockup" style="flex:1;">
+    <div class="mockup-header">📜 日志视图</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:10px;">
+      <div style="color:#fbbf24;">WARN 12:30:45 proxy timeout: 🇺🇸-03</div>
+      <div style="color:#34d399;">INFO 12:30:45 new conn: youtube.com:443 → 🇯🇵-01</div>
+      <div style="color:#60a5fa;">DEBUG 12:30:44 DNS resolved: google.com → 142.250...</div>
+      <div style="color:#ef4444;">ERROR 12:30:43 connection refused: 1.2.3.4:8080</div>
+      <div style="font-size:9px;opacity:0.5;margin-top:4px;">空格 暂停 | s 切换级别(info/warn/error/debug) | / 搜索</div>
+    </div>
+  </div>
+</div>
