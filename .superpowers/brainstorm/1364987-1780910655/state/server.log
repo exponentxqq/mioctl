@@ -5,3 +5,4 @@
 {"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/waiting.html"}
 {"type":"screen-added","file":"/home/xuqinqin/develop/person/mioctl/.superpowers/brainstorm/1364987-1780910655/content/color-themes.html"}
 {"source":"user-event","type":"click","text":"C\n    \n      Catppuccin Mocha\n      社区流行的 Catppuccin 配色。柔和的粉彩调，长时间使用不刺眼，符合现代终端审美（helix/fish/yazi 等工具标准配色）。","choice":"catppuccin","id":null,"timestamp":1780911059777}
+{"type":"server-stopped","reason":"idle timeout"}
