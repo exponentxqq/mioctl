@@ -2,7 +2,8 @@ use reqwest::Client;
 
 pub async fn fetch_subscription(url: &str) -> Result<String, String> {
     let client = Client::builder()
-        .user_agent("mioctl/0.1")
+        .user_agent("clash-verge/1.3.8")
+        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| e.to_string())?;
