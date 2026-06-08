@@ -20,36 +20,41 @@ use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
+    // Spawn background connection — don't block TUI startup
     {
-        let client = {
-            let mut s = state.lock().await;
-            s.connect();
-            s.client.clone()
-        };
-        if let Some(ref client) = client {
-            let mut s = state.lock().await;
-            if let Ok(v) = client.get_version().await {
-                s.version = v.version;
-                s.connected = true;
+        let s = state.clone();
+        tokio::spawn(async move {
+            let client = {
+                let mut s = s.lock().await;
+                s.connect();
+                s.client.clone()
+            };
+            if let Some(ref client) = client {
+                let mut s = s.lock().await;
+                if let Ok(v) = client.get_version().await {
+                    s.version = v.version;
+                    s.connected = true;
+                }
+                if let Ok((proxies, groups)) = ProxyManager::refresh_all(client).await {
+                    s.proxies = proxies;
+                    s.groups = groups;
+                    s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
+                }
+                if let Ok(conns) = ConnectionManager::list(client).await {
+                    s.connections = conns;
+                }
+                if let Ok(r) = client.get_rules().await {
+                    s.rules = r;
+                }
+                if let Ok(traffic) = client.get_traffic().await {
+                    s.traffic = traffic;
+                }
+                s.update_time();
             }
-            if let Ok((proxies, groups)) = ProxyManager::refresh_all(client).await {
-                s.proxies = proxies;
-                s.groups = groups;
-                s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
-            }
-            if let Ok(conns) = ConnectionManager::list(client).await {
-                s.connections = conns;
-            }
-            if let Ok(r) = client.get_rules().await {
-                s.rules = r;
-            }
-            if let Ok(traffic) = client.get_traffic().await {
-                s.traffic = traffic;
-            }
-            s.update_time();
-        }
+        });
     }
 
+    // Setup terminal
     enable_raw_mode().map_err(|e| e.to_string())?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen).map_err(|e| e.to_string())?;
