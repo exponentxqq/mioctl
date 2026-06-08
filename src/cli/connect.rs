@@ -5,36 +5,33 @@ pub async fn run(action: ConnectAction) {
     match action {
         ConnectAction::Test => {
             let config = MioctlConfig::load();
-            let secret = if config.mihomo.secret.is_empty() {
-                None
-            } else {
+            let has_secret = !config.mihomo.secret.is_empty();
+            let secret = if has_secret {
                 Some(config.mihomo.secret)
+            } else {
+                None
             };
             match crate::api::client::MihomoClient::new(&config.mihomo.external_controller, secret) {
-                Ok(c) => {
-                    let url = format!("{}/version", c.base_url());
-                    match c.get_version().await {
-                        Ok(v) => println!("Connected to mihomo {}", v.version),
-                        Err(e) => {
-                            // Try raw request for debugging
-                            match reqwest::get(&url).await {
-                                Ok(resp) => {
-                                    let status = resp.status();
-                                    match resp.text().await {
-                                        Ok(body) => eprintln!(
-                                            "API error: {}\n  URL: {}\n  Status: {}\n  Body (first 200): {}",
-                                            e, url, status,
-                                            &body[..body.len().min(200)]
-                                        ),
-                                        Err(_) => eprintln!("API error: {}\n  URL: {}", e, url),
-                                    }
-                                }
-                                Err(_) => eprintln!("API error: {}\n  URL: {}", e, url),
-                            }
+                Ok(c) => match c.get_version().await {
+                    Ok(v) => println!("Connected to mihomo {}", v.version),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("401") || msg.contains("Unauthorized") || msg.contains("403") {
+                            eprintln!("Authentication failed!");
+                            eprintln!("  URL: {}", c.base_url());
+                            eprintln!("  The mihomo server requires a secret key.");
+                            eprintln!("  Edit ~/.config/mioctl/config.toml and set:");
+                            eprintln!();
+                            eprintln!("  [mihomo]");
+                            eprintln!("  secret = \"your-secret-here\"");
+                            eprintln!();
+                            eprintln!("  Find your secret in mihomo config under 'secret' field.");
+                        } else {
+                            eprintln!("API error: {}", e);
                         }
                     }
-                }
-                Err(e) => eprintln!("Connection failed: {}", e),
+                },
+                Err(e) => eprintln!("Connection failed: {}\n  Check that mihomo is running and external-controller is enabled.", e),
             }
         }
     }
