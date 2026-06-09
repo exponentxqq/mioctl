@@ -21,7 +21,7 @@ pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
     // Background: connect + load initial data (lock briefly, await unlocked)
-    {
+    let init_handle = {
         let s = state.clone();
         tokio::spawn(async move {
             let client = {
@@ -53,8 +53,8 @@ pub async fn run_tui() -> Result<(), String> {
             if let Ok(r) = rules { s.rules = r; }
             if let Ok(t) = traffic { s.traffic = t; }
             s.update_time();
-        });
-    }
+        })
+    };
 
     // Setup terminal
     enable_raw_mode().map_err(|e| e.to_string())?;
@@ -115,6 +115,9 @@ pub async fn run_tui() -> Result<(), String> {
             .draw(|f| render_frame(f, &s, &spark, &mut proxy_table, &mut conn_table))
             .map_err(|e| e.to_string())?;
     }
+
+    // Abort background tasks so shutdown is instant
+    init_handle.abort();
 
     disable_raw_mode().map_err(|e| e.to_string())?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(|e| e.to_string())?;
