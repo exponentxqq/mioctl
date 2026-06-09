@@ -415,23 +415,21 @@ async fn handle_action(
                 let any_active = tun_enabled || s.system_proxy_enabled;
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    // Use minimal valid payloads — full config may contain
-                    // invalid values (e.g. stack "gVisor") that mihomo
-                    // silently rejects, leaving enable unchanged.
                     let (payload, action_str) = if any_active {
                         if tun_enabled {
                             (serde_json::json!({"tun": {"enable": false}}), "disable TUN")
                         } else {
+                            // Just clear system proxy, don't touch TUN
                             (serde_json::json!({}), "disable proxy")
                         }
                     } else {
-                        (serde_json::json!({"tun": {"enable": true, "stack": "system"}}), "enable TUN")
+                        (serde_json::json!({"tun": {"enable": true}}), "enable TUN")
                     };
 
                     let result = if payload.as_object().map(|o| o.is_empty()).unwrap_or(true) {
                         Ok(())
                     } else {
-                        c.patch_configs(payload).await
+                        c.patch_configs(payload.clone()).await
                     };
 
                     if any_active {
@@ -441,11 +439,13 @@ async fn handle_action(
                     refresh_state(&shared2).await;
 
                     let mut s = shared2.lock().await;
-                    // Diagnostic: log post-refresh TUN state
+                    // Diagnostic: log payload + post-refresh TUN state
                     let tun_state = s.tun.as_ref().map(|t| (t.enable, t.stack.clone()));
+                    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
                     s.add_log("info", &format!(
-                        "[DIAG] {} → result={:?} → tun_after={:?}",
+                        "[DIAG] {} → PATCH {} → result={:?} → tun_after={:?}",
                         action_str,
+                        payload_str,
                         result.as_ref().map(|_| "ok").unwrap_or("err"),
                         tun_state,
                     ));
