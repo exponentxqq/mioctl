@@ -139,13 +139,14 @@ Note: `add_log` and `loading` clear happen in the same lock for atomicity. `refr
 
 | File | Changes |
 |------|---------|
-| `src/app/state.rs` | Add `add_log()`, 4 new UiState fields (`log_cursor`, `log_visual`, `log_select_start`, `log_select_end`), move `LOG_CAP` |
-| `src/ui/views/logs.rs` | Rewrite render: selection highlighting, cursor line highlight, scroll management, mouse click position tracking |
-| `src/ui/app.rs` | Handle `v`/`y`/`Esc` in Logs view context, mouse drag handling, wire `add_log` into all spawns |
-| `src/ui/keybindings.rs` | Add `Action::LogVisual`, `Action::LogCopy` variants, map `v`/`y` when active view is Logs |
+| `src/config/mioctl_config.rs` | Add `app_log_level` field to `Preferences` with default `"info"` |
+| `src/app/state.rs` | Add `add_log()` with level filtering, 4 new UiState fields, move `LOG_CAP` |
+| `src/ui/views/logs.rs` | Rewrite render: selection highlighting, cursor line highlight, scroll management |
+| `src/ui/app.rs` | Handle `v`/`y`/`Esc` in Logs view context, mouse drag, wire `add_log` into all spawns |
+| `src/ui/keybindings.rs` | Add `Action::LogVisual`, `Action::LogCopy` variants |
 | `Cargo.toml` | Add `arboard = "3"` dependency |
 
-5 files total (1 new dependency, 0 new files).
+6 files total (1 new dependency, 0 new files).
 
 ## Scroll Implementation
 
@@ -163,6 +164,46 @@ let scroll = if log_cursor >= total.saturating_sub(1) {
     (log_cursor + visible / 3).saturating_sub(visible / 3)
         .min(total.saturating_sub(visible.min(total)))
 };
+```
+
+## Configurable App Log Level
+
+`Preferences` struct (`src/config/mioctl_config.rs`) gains a new field:
+
+```rust
+#[serde(default = "default_app_log_level")]
+pub app_log_level: String,
+```
+
+Default: `"info"`. Valid values: `"debug"`, `"info"`, `"error"`, `"off"`.
+
+`AppState::add_log()` checks this level before writing:
+
+```rust
+pub fn add_log(&mut self, level: &str, msg: &str) {
+    // Skip if disabled or below configured level
+    if self.config.preferences.app_log_level == "off" { return; }
+    if self.config.preferences.app_log_level == "info" && level == "debug" { return; }
+    if self.config.preferences.app_log_level == "error" && level != "error" { return; }
+
+    let entry = LogEntry {
+        level: level.to_string(),
+        payload: format!("[{}] {}", Local::now().format("%H:%M:%S"), msg),
+    };
+    self.logs.push(entry);
+    while self.logs.len() > LOG_CAP {
+        self.logs.remove(0);
+    }
+}
+```
+
+Level hierarchy: `debug > info > error`. `"off"` suppresses all app logging.
+
+The config key in `~/.config/mioctl/config.toml`:
+
+```toml
+[preferences]
+app_log_level = "info"
 ```
 
 ## Clipboard
