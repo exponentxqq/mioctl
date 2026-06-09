@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, Event, KeyEventKind},
+    event::{self, EnableMouseCapture, DisableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -13,8 +13,8 @@ use ratatui::{
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
 use crate::app::state::{ActiveView::*, AppState, SharedState};
-use crate::ui::keybindings::{parse_key, Action};
-use crate::ui::views::{connections, dashboard, logs, proxies, rules, sidebar};
+use crate::ui::keybindings::{parse_key, parse_mouse, Action};
+use crate::ui::views::{connections, dashboard, help, logs, proxies, rules, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
 pub async fn run_tui() -> Result<(), String> {
@@ -59,7 +59,7 @@ pub async fn run_tui() -> Result<(), String> {
     // Setup terminal
     enable_raw_mode().map_err(|e| e.to_string())?;
     let mut stdout = std::io::stdout();
-    execute!(stdout, EnterAlternateScreen).map_err(|e| e.to_string())?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(|e| e.to_string())?;
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
@@ -72,16 +72,26 @@ pub async fn run_tui() -> Result<(), String> {
 
     loop {
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
-            if let Event::Key(key) = event::read().map_err(|e| e.to_string())? {
-                if key.kind == KeyEventKind::Release {
-                    continue;
-                }
-                if let Some(action) = parse_key(key) {
-                    let mut s = state.lock().await;
-                    if !handle_action(&action, &mut s).await {
-                        break;
+            match event::read().map_err(|e| e.to_string())? {
+                Event::Key(key) => {
+                    if key.kind == KeyEventKind::Release { continue; }
+                    if let Some(action) = parse_key(key) {
+                        let mut s = state.lock().await;
+                        if !handle_action(&action, &mut s).await { break; }
                     }
                 }
+                Event::Mouse(mouse) => {
+                    if let Some(action) = parse_mouse(mouse) {
+                        let mut s = state.lock().await;
+                        if s.ui.show_help {
+                            // Close help on any click outside
+                            s.ui.show_help = false;
+                        } else {
+                            handle_action(&action, &mut s).await;
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -120,7 +130,7 @@ pub async fn run_tui() -> Result<(), String> {
     init_handle.abort();
 
     disable_raw_mode().map_err(|e| e.to_string())?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).map_err(|e| e.to_string())?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).map_err(|e| e.to_string())?;
     terminal.show_cursor().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -150,6 +160,11 @@ fn render_frame(
         Logs => logs::render(f, content[0], state),
     }
     status_bar::render(f, content[1], state);
+
+    // Help popup overlay
+    if state.ui.show_help {
+        help::render(f);
+    }
 }
 
 async fn handle_action(action: &Action, s: &mut AppState) -> bool {
@@ -248,6 +263,13 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
             }
         }
         Action::TogglePause => s.ui.log_paused = !s.ui.log_paused,
+        Action::ToggleHelp => s.ui.show_help = !s.ui.show_help,
+        Action::Back => {
+            if s.ui.show_help {
+                s.ui.show_help = false;
+            }
+            // Back is also used in proxies view context (Esc)
+        }
         Action::CycleLogLevel => {
             s.ui.log_level_filter = match s.ui.log_level_filter.as_deref() {
                 None => Some("info".into()),

@@ -31,6 +31,7 @@ pub struct UiState {
     pub log_level_filter: Option<String>,
     pub search_query: String,
     pub search_mode: bool,
+    pub show_help: bool,
 }
 
 impl Default for UiState {
@@ -44,6 +45,7 @@ impl Default for UiState {
             log_level_filter: None,
             search_query: String::new(),
             search_mode: false,
+            show_help: false,
         }
     }
 }

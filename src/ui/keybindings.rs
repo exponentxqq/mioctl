@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -23,6 +23,7 @@ pub enum Action {
     CloseAllConnections,
     TogglePause,
     CycleLogLevel,
+    ToggleHelp,
     Refresh,
 }
 
@@ -57,6 +58,24 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
         KeyEvent { code: KeyCode::Char('D'), modifiers: KeyModifiers::SHIFT, .. } => Some(Action::CloseAllConnections),
         KeyEvent { code: KeyCode::Char(' '), .. } => Some(Action::TogglePause),
         KeyEvent { code: KeyCode::Char('s'), .. } => Some(Action::CycleLogLevel),
+        KeyEvent { code: KeyCode::Char('?'), .. } => Some(Action::ToggleHelp),
+        _ => None,
+    }
+}
+
+pub fn parse_mouse(event: MouseEvent) -> Option<Action> {
+    match event.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Left click: switch to view based on x position (sidebar area)
+            let x = event.column;
+            if x < 16 {
+                let view_idx = (event.row as usize).saturating_sub(1);
+                if view_idx < 5 {
+                    return Some(Action::SwitchView(view_idx));
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
@@ -77,5 +96,6 @@ mod tests {
     #[test] fn test_proxies() { assert_eq!(parse_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(Action::SwitchNode)); assert_eq!(parse_key(k('t')), Some(Action::TestNodeDelay)); }
     #[test] fn test_connections() { assert_eq!(parse_key(k('d')), Some(Action::CloseConnection)); assert_eq!(parse_key(ks('D')), Some(Action::CloseAllConnections)); }
     #[test] fn test_logs() { assert_eq!(parse_key(k(' ')), Some(Action::TogglePause)); }
+    #[test] fn test_help() { assert_eq!(parse_key(k('?')), Some(Action::ToggleHelp)); }
     #[test] fn test_unknown() { assert_eq!(parse_key(k('z')), None); }
 }
