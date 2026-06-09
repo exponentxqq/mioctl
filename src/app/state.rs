@@ -33,6 +33,8 @@ pub struct UiState {
     pub search_mode: bool,
     pub show_help: bool,
     pub show_settings: bool,
+    pub show_mode_selector: bool,
+    pub mode_selector_idx: usize,
     pub update_status: Option<String>,
 }
 
@@ -49,6 +51,8 @@ impl Default for UiState {
             search_mode: false,
             show_help: false,
             show_settings: false,
+            show_mode_selector: false,
+            mode_selector_idx: 0,
             update_status: None,
         }
     }
