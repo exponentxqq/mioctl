@@ -16,12 +16,6 @@ fn proxy_env_path() -> PathBuf {
         .join("proxy.env")
 }
 
-fn pam_env_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".pam_environment")
-}
-
 /// Check whether system proxy is enabled: proxy.conf exists and
 /// HTTP_PROXY line points to 127.0.0.1:<mixed_port>.
 pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
@@ -81,49 +75,49 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     }
     fs::write(&env_path, &env_content)?;
 
-    // Write .pam_environment — same mechanism as /etc/environment,
-    // covers ALL processes including browsers launched from DE.
-    // Format: KEY DEFAULT=value (DEFAULT = set if not already defined)
-    let pam_content = format!(
-        "HTTP_PROXY DEFAULT=http://127.0.0.1:{0}\n\
-         http_proxy DEFAULT=http://127.0.0.1:{0}\n\
-         HTTPS_PROXY DEFAULT=http://127.0.0.1:{0}\n\
-         https_proxy DEFAULT=http://127.0.0.1:{0}\n\
-         NO_PROXY DEFAULT=localhost,127.0.0.1,::1,.local\n\
-         no_proxy DEFAULT=localhost,127.0.0.1,::1,.local\n",
-        mixed_port
-    );
-    fs::write(pam_env_path(), pam_content)?;
-
-    // Set via systemd — covers all shells, terminals, and GUI apps
-    let _ = std::process::Command::new("systemctl")
+    // Set via gsettings (GNOME/KDE system proxy) — browsers pick this up.
+    // This is what clash-verge-rev does via the sysproxy crate.
+    let _ = std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.system.proxy", "mode", "manual"])
+        .output();
+    let _ = std::process::Command::new("gsettings")
         .args([
-            "--user",
-            "set-environment",
-            &format!("HTTP_PROXY=http://127.0.0.1:{}", mixed_port),
-            &format!("HTTPS_PROXY=http://127.0.0.1:{}", mixed_port),
-            &format!("ALL_PROXY=socks5://127.0.0.1:{}", mixed_port),
-            "NO_PROXY=localhost,127.0.0.1,::1,.local",
+            "set", "org.gnome.system.proxy.http", "host", "127.0.0.1",
+        ])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set", "org.gnome.system.proxy.http", "port",
+            &mixed_port.to_string(),
+        ])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set", "org.gnome.system.proxy.https", "host", "127.0.0.1",
+        ])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set", "org.gnome.system.proxy.https", "port",
+            &mixed_port.to_string(),
+        ])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set", "org.gnome.system.proxy", "ignore-hosts",
+            "['localhost', '127.0.0.0/8', '::1', '.local']",
         ])
         .output();
 
     Ok(())
 }
 
-/// Remove proxy.conf, proxy.env, and unset via systemd.
+/// Remove proxy.conf, proxy.env, and disable gsettings system proxy.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
-    let _ = fs::remove_file(pam_env_path());
-    let _ = std::process::Command::new("systemctl")
-        .args([
-            "--user",
-            "unset-environment",
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "ALL_PROXY",
-            "NO_PROXY",
-        ])
+    let _ = std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.system.proxy", "mode", "none"])
         .output();
 }
 
