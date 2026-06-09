@@ -34,10 +34,11 @@ fn collect_log_selection(state: &AppState) -> String {
         .join("\n")
 }
 
-/// Copy text to system clipboard. If clipboard fails, silently ignore.
-fn copy_to_clipboard(text: &str) {
-    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-        let _ = clipboard.set_text(text);
+/// Copy text to system clipboard. Returns true on success.
+fn copy_to_clipboard(text: &str) -> bool {
+    match arboard::Clipboard::new() {
+        Ok(mut clipboard) => clipboard.set_text(text).is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -238,9 +239,12 @@ pub async fn run_tui() -> Result<(), String> {
                             }
                             KeyCode::Char('y') => {
                                 let text = collect_log_selection(&s);
+                                let copied = copy_to_clipboard(&text);
                                 s.ui.log_visual = false;
+                                if !copied {
+                                    s.add_log("error", "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)");
+                                }
                                 drop(s);
-                                copy_to_clipboard(&text);
                                 continue;
                             }
                             KeyCode::Esc => {
@@ -692,12 +696,22 @@ async fn handle_action(
         }
         Action::LogCopy => {
             if s.ui.active_view == Logs {
-                if s.ui.log_visual {
-                    let text = collect_log_selection(s);
-                    copy_to_clipboard(&text);
+                let (text, copied) = if s.ui.log_visual {
+                    let t = collect_log_selection(s);
+                    let ok = copy_to_clipboard(&t);
                     s.ui.log_visual = false;
+                    (t, ok)
                 } else if let Some(entry) = s.logs.get(s.ui.log_cursor) {
-                    copy_to_clipboard(&entry.payload);
+                    let t = entry.payload.clone();
+                    let ok = copy_to_clipboard(&t);
+                    (t, ok)
+                } else {
+                    return true;
+                };
+                if !copied {
+                    s.add_log("error", "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)");
+                } else {
+                    s.add_log("info", &format!("Copied: {} chars", text.len()));
                 }
             }
         }
