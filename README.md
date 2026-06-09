@@ -6,6 +6,7 @@
 
 - **交互式 TUI** — 侧边栏导航，5 个视图（概览、代理、连接、规则、日志）
 - **完整 API 封装** — 所有 mihomo REST 端点，WebSocket 实时数据流
+- **TUN & 系统代理** — Dashboard 显示 TUN / 系统代理 / 端口状态，`p` 键一键切换
 - **订阅管理** — URL 添加/更新/删除，自动识别格式并注入 proxy-provider
 - **代理控制** — 策略组浏览、节点切换、延迟测试、模式切换
 - **Vim 风格快捷键**，Catppuccin Mocha 配色
@@ -79,22 +80,19 @@ url = "https://free.example.com/sub"
 
 ### 全局
 
-| 按键                   | 功能                                 |
-| ---------------------- | ------------------------------------ |
-| `1` `2` `3` `4` `5`    | 切换视图（概览/代理/连接/规则/日志） |
-| `j` / `k` 或 `↑` / `↓` | 上下移动                             |
-| `g`                    | 跳到顶部                             |
-| `G`                    | 跳到底部                             |
-| `/`                    | 搜索 / 过滤                          |
-| `n` / `N`              | 下一个 / 上一个搜索结果              |
-| `:`                    | 命令模式                             |
-| `q`                    | 退出                                 |
-
-### 概览视图
-
-| 按键 | 功能                                    |
-| ---- | --------------------------------------- |
-| `m`  | 切换代理模式（全局 → 规则 → 直连 循环） |
+| 按键                   | 功能                                  |
+| ---------------------- | ------------------------------------- |
+| `1` `2` `3` `4` `5`    | 切换视图（概览/代理/连接/规则/日志）  |
+| `j` / `k` 或 `↑` / `↓` | 上下移动                              |
+| `g`                    | 跳到顶部                              |
+| `G`                    | 跳到底部                              |
+| `/`                    | 搜索 / 过滤                           |
+| `n` / `N`              | 下一个 / 上一个搜索结果               |
+| `r`                    | 手动刷新数据                          |
+| `m`                    | 切换代理模式（全局 → 规则 → 直连）    |
+| `p`                    | 切换代理开关（TUN / 系统代理 / 关闭） |
+| `?`                    | 显示帮助                              |
+| `q`                    | 退出                                  |
 
 ### 代理视图
 
@@ -124,11 +122,13 @@ url = "https://free.example.com/sub"
 
 ### 📊 概览
 
-默认视图，展示代理模式、实时上下行流量速率、活跃连接数、流量趋势图（Sparkline）、内存使用和 mihomo 版本。
+默认视图。第一行显示代理模式、上下行速率、连接数；第二行显示 TUN 状态、系统代理状态、混合端口、LAN 开放状态；下方为流量趋势图、策略组表格（显示每个组的当前活跃节点）、内存和版本信息。
+
+按 `p` 可一键切换代理状态：有任何代理活跃时按 `p` 全部关闭，全部关闭时按 `p` 开启 TUN 模式。
 
 ### 🔗 代理
 
-左侧策略组列表，右侧节点详情表格。显示节点名称、类型、延迟和选中状态。支持即时切换和延迟测试。
+左侧策略组列表，右侧节点详情表格。显示节点名称、类型、延迟和选中状态。支持即时切换和延迟测试。国旗 emoji 自动转换为 `[XX]` 格式以确保终端兼容性。
 
 ### 🌐 连接
 
@@ -141,6 +141,16 @@ url = "https://free.example.com/sub"
 ### 📜 日志
 
 实时滚动日志流，按日志级别着色（info=绿、warning=黄、error=红、debug=灰）。支持暂停和级别过滤。
+
+## 系统代理
+
+mioctl 通过 `~/.config/environment.d/proxy.conf`（systemd 用户环境）管理系统代理设置，无需 sudo。
+
+- **检测**：读取 proxy.conf，检查 `HTTP_PROXY` 是否指向 mihomo 端口
+- **启用**：写入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`，并执行 `systemctl --user import-environment` 刷新当前会话
+- **禁用**：删除 proxy.conf 并刷新环境变量
+
+TUN 模式通过 mihomo `PATCH /configs` API 直接控制，与系统代理联动切换。
 
 ## 支持的订阅格式
 
@@ -169,6 +179,9 @@ mioctl sub update --all 更新全部订阅
 ├── config.toml           # mioctl 配置
 └── providers/            # 生成的 proxy-provider 文件
     └── my-sub.yaml
+
+~/.config/environment.d/
+└── proxy.conf            # 系统代理环境变量（自动管理）
 ```
 
 ## 常见问题
@@ -182,18 +195,16 @@ A: 检查订阅 URL 是否可访问。部分订阅需要特定 User-Agent（mioc
 **Q: 如何添加新的订阅？**
 A: 在 `~/.config/mioctl/config.toml` 的 `[[subscriptions.items]]` 段中添加 name 和 url，然后运行 `mioctl sub update --all`。
 
-**Q: 节点切换后不生效？**
-A: 节点切换通过 mihomo API 即时生效。确保你在正确的策略组中切换。
+**Q: 按 `p` 切换 TUN 没有反应？**
+A: 确认 mihomo 配置中包含 `tun` 段。TUN 模式需要 mihomo 以相应权限运行（如 Linux 上需要 `CAP_NET_ADMIN`）。
 
 ## 开发
 
 ```bash
-# 运行所有测试
-cargo test --bin mioctl          # 36 个单元测试
-cargo test --test integration_test  # 11 个集成测试
-
-# 编译发布版本
-cargo build --release
+cargo test                          # 运行全部测试（~120 个）
+cargo test --test integration_test  # 集成测试（wiremock）
+cargo clippy -- -D warnings         # lint
+cargo build --release               # 编译发布版本
 ```
 
 ## 许可

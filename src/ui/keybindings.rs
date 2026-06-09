@@ -26,6 +26,7 @@ pub enum Action {
     ToggleHelp,
     UpdateSubs,
     ShowSettings,
+    ToggleProxy,
     Refresh,
 }
 
@@ -60,6 +61,7 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
         KeyEvent { code: KeyCode::Char('D'), modifiers: KeyModifiers::SHIFT, .. } => Some(Action::CloseAllConnections),
         KeyEvent { code: KeyCode::Char(' '), .. } => Some(Action::TogglePause),
         KeyEvent { code: KeyCode::Char('s'), .. } => Some(Action::CycleLogLevel),
+        KeyEvent { code: KeyCode::Char('p'), .. } => Some(Action::ToggleProxy),
         KeyEvent { code: KeyCode::Char('r'), .. } => Some(Action::Refresh),
         KeyEvent { code: KeyCode::Char('?'), .. } => Some(Action::ToggleHelp),
         _ => None,
@@ -101,6 +103,7 @@ mod tests {
     #[test] fn test_jump() { assert_eq!(parse_key(k('g')), Some(Action::JumpTop)); assert_eq!(parse_key(ks('G')), Some(Action::JumpBottom)); }
     #[test] fn test_search() { assert_eq!(parse_key(k('/')), Some(Action::Search)); assert_eq!(parse_key(ks('N')), Some(Action::SearchPrev)); }
     #[test] fn test_dashboard() { assert_eq!(parse_key(k('m')), Some(Action::CycleMode)); }
+    #[test] fn test_toggle_proxy() { assert_eq!(parse_key(k('p')), Some(Action::ToggleProxy)); }
     #[test] fn test_proxies() { assert_eq!(parse_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(Action::SwitchNode)); assert_eq!(parse_key(k('t')), Some(Action::TestNodeDelay)); }
     #[test] fn test_connections() { assert_eq!(parse_key(k('d')), Some(Action::CloseConnection)); assert_eq!(parse_key(ks('D')), Some(Action::CloseAllConnections)); }
     #[test] fn test_logs() { assert_eq!(parse_key(k(' ')), Some(Action::TogglePause)); }

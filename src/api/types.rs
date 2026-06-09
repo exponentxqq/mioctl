@@ -151,6 +151,22 @@ pub struct MihomoConfig {
     pub mode: Option<String>,
     #[serde(default, rename = "log-level")]
     pub log_level: Option<String>,
+    #[serde(default)]
+    pub tun: Option<TunConfig>,
+}
+
+// === TUN ===
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TunConfig {
+    #[serde(default)]
+    pub enable: bool,
+    #[serde(default)]
+    pub stack: Option<String>,
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default, rename = "auto-route")]
+    pub auto_route: Option<bool>,
 }
 
 // === Proxy Provider ===
@@ -290,6 +306,44 @@ mod tests {
         let json = r#"{"type": "info", "payload": "new connection"}"#;
         let entry: LogEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.level, "info");
+    }
+
+    #[test]
+    fn test_deserialize_mihomo_config_with_tun() {
+        let json = r#"{
+            "port": 7890,
+            "mixed-port": 7897,
+            "allow-lan": true,
+            "mode": "rule",
+            "tun": {
+                "enable": true,
+                "stack": "system",
+                "device": "utun",
+                "auto-route": true
+            }
+        }"#;
+        let cfg: MihomoConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.mixed_port, Some(7897));
+        let tun = cfg.tun.unwrap();
+        assert!(tun.enable);
+        assert_eq!(tun.stack.as_deref(), Some("system"));
+        assert_eq!(tun.device.as_deref(), Some("utun"));
+        assert_eq!(tun.auto_route, Some(true));
+    }
+
+    #[test]
+    fn test_deserialize_mihomo_config_no_tun() {
+        let json = r#"{"port": 7890, "mode": "rule"}"#;
+        let cfg: MihomoConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.tun.is_none());
+        assert!(cfg.mixed_port.is_none());
+    }
+
+    #[test]
+    fn test_tun_config_default() {
+        let tun = TunConfig::default();
+        assert!(!tun.enable);
+        assert!(tun.stack.is_none());
     }
 
     #[test]

@@ -2,5 +2,6 @@ pub mod api;
 pub mod app;
 pub mod cli;
 pub mod config;
+pub mod os;
 pub mod subscription;
 pub mod ui;

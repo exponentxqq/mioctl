@@ -12,6 +12,7 @@ use ratatui::{
 
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
+use crate::os;
 use crate::app::state::{ActiveView::*, AppState, ProxyMode, SharedState};
 use crate::subscription::manager::SubscriptionManager;
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
@@ -75,6 +76,10 @@ pub async fn run_tui() -> Result<(), String> {
                         Some("direct") => ProxyMode::Direct,
                         _ => ProxyMode::Rule,
                     };
+                    s.mixed_port = c.mixed_port;
+                    s.allow_lan = c.allow_lan;
+                    s.tun = c.tun;
+                    s.system_proxy_enabled = os::proxy::detect_system_proxy(c.mixed_port);
                 }
                 if let Ok(m) = memory_r { s.memory = m; }
                 s.update_time();
@@ -267,6 +272,28 @@ async fn handle_action(
                 });
             }
         }
+        Action::ToggleProxy => {
+            if let Some(c) = client {
+                let tun_enabled = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
+                let any_active = tun_enabled || s.system_proxy_enabled;
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    if any_active {
+                        if tun_enabled {
+                            let _ = c.patch_configs(
+                                serde_json::json!({"tun": {"enable": false}})
+                            ).await;
+                        }
+                        crate::os::proxy::clear_system_proxy();
+                    } else {
+                        let _ = c.patch_configs(
+                            serde_json::json!({"tun": {"enable": true}})
+                        ).await;
+                    }
+                    refresh_state(&shared2).await;
+                });
+            }
+        }
         Action::SwitchNode => {
             let i = s.ui.selected_group_idx;
             let j = s.ui.selected_node_idx;
@@ -454,6 +481,10 @@ async fn refresh_state(shared: &SharedState) {
             Some("direct") => ProxyMode::Direct,
             _ => ProxyMode::Rule,
         };
+        s.mixed_port = c.mixed_port;
+        s.allow_lan = c.allow_lan;
+        s.tun = c.tun;
+        s.system_proxy_enabled = os::proxy::detect_system_proxy(c.mixed_port);
     }
     if let Ok(m) = memory { s.memory = m; }
     s.update_time();

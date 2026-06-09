@@ -13,38 +13,86 @@ use crate::ui::widgets::sparkline::TrafficSpark;
 pub fn render(f: &mut Frame, area: Rect, state: &AppState, spark: &TrafficSpark) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(5), Constraint::Length(3), Constraint::Min(1)])
+        .constraints([
+            Constraint::Length(5),  // row 1: Mode/Upload/Download/Conns
+            Constraint::Length(5),  // row 2: TUN/SysProxy/MixPort/AllowLAN
+            Constraint::Length(3),  // traffic sparkline
+            Constraint::Min(1),     // groups table + info line
+        ])
         .split(area);
 
-    let cards = Layout::default()
+    // Row 1: traffic stats
+    let cards1 = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Ratio(1,4), Constraint::Ratio(1,4), Constraint::Ratio(1,4), Constraint::Ratio(1,4)])
+        .constraints([
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+        ])
         .split(chunks[0]);
 
-    card(f, cards[0], "Mode", &format!("{:?}", state.proxy_mode), T.primary);
-    card(f, cards[1], "Upload", &format!("{:.1} KB/s", state.traffic.up as f64 / 1024.0), T.green);
-    card(f, cards[2], "Download", &format!("{:.1} KB/s", state.traffic.down as f64 / 1024.0), T.red);
-    card(f, cards[3], "Conns", &state.connections.len().to_string(), T.yellow);
+    card(f, cards1[0], "Mode", &format!("{:?}", state.proxy_mode), T.primary);
+    card(f, cards1[1], "Upload", &format!("{:.1} KB/s", state.traffic.up as f64 / 1024.0), T.green);
+    card(f, cards1[2], "Download", &format!("{:.1} KB/s", state.traffic.down as f64 / 1024.0), T.red);
+    card(f, cards1[3], "Conns", &state.connections.len().to_string(), T.yellow);
 
+    // Row 2: proxy status
+    let cards2 = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 4),
+        ])
+        .split(chunks[1]);
+
+    let tun_enabled = state.tun.as_ref().map(|t| t.enable).unwrap_or(false);
+    let tun_color = if tun_enabled { T.green } else { T.surface };
+    card(f, cards2[0], "TUN", if tun_enabled { "ON" } else { "OFF" }, tun_color);
+
+    let sp_color = if state.system_proxy_enabled { T.green } else { T.surface };
+    card(f, cards2[1], "SysProxy", if state.system_proxy_enabled { "ON" } else { "OFF" }, sp_color);
+
+    let port_str = state.mixed_port
+        .map(|p| format!(":{}", p))
+        .unwrap_or_else(|| "—".into());
+    card(f, cards2[2], "MixPort", &port_str, T.text);
+
+    let lan_str = state.allow_lan
+        .map(|b| if b { "Yes" } else { "No" })
+        .unwrap_or("—");
+    card(f, cards2[3], "AllowLAN", lan_str, T.text_secondary);
+
+    // Traffic sparkline
     let spark_block = Block::default().title("Traffic").style(Style::default().fg(T.text_secondary));
-    let inner = spark_block.inner(chunks[1]);
-    f.render_widget(spark_block, chunks[1]);
+    let inner = spark_block.inner(chunks[2]);
+    f.render_widget(spark_block, chunks[2]);
     crate::ui::widgets::sparkline::render(f, inner, (T.green, T.red), spark);
 
-    // Proxy groups table
+    // Bottom: groups table + info line
     let bottom_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(chunks[2]);
+        .split(chunks[3]);
 
     render_groups_table(f, bottom_chunks[0], state);
 
     let info_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Ratio(1,2), Constraint::Ratio(1,2)])
+        .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(bottom_chunks[1]);
-    f.render_widget(Paragraph::new(format!("Memory: {:.1} MB", state.memory.inuse as f64 / 1024.0)).style(Style::default().fg(T.text)), info_chunks[0]);
-    f.render_widget(Paragraph::new(format!("Version: mihomo {}", state.version)).style(Style::default().fg(T.text)), info_chunks[1]);
+    f.render_widget(
+        Paragraph::new(format!("Memory: {:.1} MB", state.memory.inuse as f64 / 1024.0))
+            .style(Style::default().fg(T.text)),
+        info_chunks[0],
+    );
+    f.render_widget(
+        Paragraph::new(format!("Version: mihomo {}", state.version))
+            .style(Style::default().fg(T.text)),
+        info_chunks[1],
+    );
 }
 
 fn render_groups_table(f: &mut Frame, area: Rect, state: &AppState) {

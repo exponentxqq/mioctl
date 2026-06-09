@@ -18,8 +18,9 @@ const HELP_TEXT: &str = r#"
  n/N  Next/prev match
  r    Refresh data          Connections
  m    Cycle proxy mode      ───────────
- q    Quit                  d      Close connection
- ?    Toggle help           D      Close all
+ p    Toggle proxy          d      Close connection
+ q    Quit                  D      Close all
+ ?    Toggle help
 
                             Logs
                             ────
