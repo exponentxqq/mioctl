@@ -50,9 +50,11 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     // Write proxy.conf for detection (no export prefix)
     let conf_content = format!(
         "HTTP_PROXY=http://127.0.0.1:{0}\n\
+         http_proxy=http://127.0.0.1:{0}\n\
          HTTPS_PROXY=http://127.0.0.1:{0}\n\
-         ALL_PROXY=socks5://127.0.0.1:{0}\n\
-         NO_PROXY=localhost,127.0.0.1,::1,.local\n",
+         https_proxy=http://127.0.0.1:{0}\n\
+         NO_PROXY=localhost,127.0.0.1,::1,.local\n\
+         no_proxy=localhost,127.0.0.1,::1,.local\n",
         mixed_port
     );
     fs::write(&conf_path, &conf_content)?;
@@ -60,9 +62,11 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     // Write proxy.env for shell sourcing (with export)
     let env_content = format!(
         "export HTTP_PROXY=http://127.0.0.1:{0}\n\
+         export http_proxy=http://127.0.0.1:{0}\n\
          export HTTPS_PROXY=http://127.0.0.1:{0}\n\
-         export ALL_PROXY=socks5://127.0.0.1:{0}\n\
-         export NO_PROXY=localhost,127.0.0.1,::1,.local\n",
+         export https_proxy=http://127.0.0.1:{0}\n\
+         export NO_PROXY=localhost,127.0.0.1,::1,.local\n\
+         export no_proxy=localhost,127.0.0.1,::1,.local\n",
         mixed_port
     );
     let env_path = proxy_env_path();
