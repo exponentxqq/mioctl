@@ -121,6 +121,7 @@ pub async fn run_tui() -> Result<(), String> {
                 }
                 if let Ok(m) = memory_r { s.memory = m; }
                 s.update_time();
+                s.add_log("info", "Connected");
                 s.ui.loading = None;
             }
 
