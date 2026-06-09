@@ -28,6 +28,8 @@ pub enum Action {
     ShowSettings,
     ToggleProxy,
     Refresh,
+    LogVisual,
+    LogCopy,
 }
 
 pub fn parse_key(event: KeyEvent) -> Option<Action> {
@@ -64,6 +66,8 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
         KeyEvent { code: KeyCode::Char('p'), .. } => Some(Action::ToggleProxy),
         KeyEvent { code: KeyCode::Char('r'), .. } => Some(Action::Refresh),
         KeyEvent { code: KeyCode::Char('?'), .. } => Some(Action::ToggleHelp),
+        KeyEvent { code: KeyCode::Char('v'), modifiers: KeyModifiers::NONE, .. } => Some(Action::LogVisual),
+        KeyEvent { code: KeyCode::Char('y'), modifiers: KeyModifiers::NONE, .. } => Some(Action::LogCopy),
         _ => None,
     }
 }
@@ -108,5 +112,7 @@ mod tests {
     #[test] fn test_connections() { assert_eq!(parse_key(k('d')), Some(Action::CloseConnection)); assert_eq!(parse_key(ks('D')), Some(Action::CloseAllConnections)); }
     #[test] fn test_logs() { assert_eq!(parse_key(k(' ')), Some(Action::TogglePause)); }
     #[test] fn test_help() { assert_eq!(parse_key(k('?')), Some(Action::ToggleHelp)); }
+    #[test] fn test_log_visual() { assert_eq!(parse_key(k('v')), Some(Action::LogVisual)); }
+    #[test] fn test_log_copy() { assert_eq!(parse_key(k('y')), Some(Action::LogCopy)); }
     #[test] fn test_unknown() { assert_eq!(parse_key(k('z')), None); }
 }

@@ -19,6 +19,28 @@ use crate::ui::keybindings::{parse_key, parse_mouse, Action};
 use crate::ui::views::{connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
+/// Collect payload text from the selected log range, joined by newlines.
+fn collect_log_selection(state: &AppState) -> String {
+    let start = state.ui.log_select_start.min(state.ui.log_select_end);
+    let end = state.ui.log_select_start.max(state.ui.log_select_end);
+    let end = end.min(state.logs.len().saturating_sub(1));
+    if start > end {
+        return String::new();
+    }
+    state.logs[start..=end]
+        .iter()
+        .map(|e| e.payload.as_str())
+        .collect::<Vec<&str>>()
+        .join("\n")
+}
+
+/// Copy text to system clipboard. If clipboard fails, silently ignore.
+fn copy_to_clipboard(text: &str) {
+    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+        let _ = clipboard.set_text(text);
+    }
+}
+
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
@@ -159,15 +181,53 @@ pub async fn run_tui() -> Result<(), String> {
                                 let s2 = state.clone();
                                 tokio::spawn(async move {
                                     if let Some(ref client) = c {
-                                        let _ = ProxyManager::set_proxy_mode(client, &target).await;
-                                        refresh_state(&s2).await;
+                                        match ProxyManager::set_proxy_mode(client, &target).await {
+                                            Ok(()) => {
+                                                refresh_state(&s2).await;
+                                                let mut s = s2.lock().await;
+                                                s.add_log("info", &format!("Mode switched to {:?}", target));
+                                                s.ui.loading = None;
+                                            }
+                                            Err(e) => {
+                                                let mut s = s2.lock().await;
+                                                s.add_log("error", &format!("Failed to switch mode: {}", e));
+                                                s.ui.loading = None;
+                                            }
+                                        }
+                                    } else {
+                                        let mut s = s2.lock().await;
+                                        s.ui.loading = None;
                                     }
-                                    let mut s = s2.lock().await;
-                                    s.ui.loading = None;
                                 });
                             }
                             KeyCode::Esc => {
                                 s.ui.show_mode_selector = false;
+                            }
+                            _ => {}
+                        }
+                    } else if s.ui.active_view == Logs && s.ui.log_visual {
+                        // Logs visual mode: intercept navigation keys
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let m = s.logs.len().saturating_sub(1);
+                                s.ui.log_select_end = (s.ui.log_select_end + 1).min(m);
+                                s.ui.log_cursor = s.ui.log_select_end;
+                            }
+                            KeyCode::Char('k') | KeyCode::Up
+                                if s.ui.log_select_end > s.ui.log_select_start =>
+                            {
+                                s.ui.log_select_end = s.ui.log_select_end.saturating_sub(1);
+                                s.ui.log_cursor = s.ui.log_select_end;
+                            }
+                            KeyCode::Char('y') => {
+                                let text = collect_log_selection(&s);
+                                s.ui.log_visual = false;
+                                drop(s);
+                                copy_to_clipboard(&text);
+                                continue;
+                            }
+                            KeyCode::Esc => {
+                                s.ui.log_visual = false;
                             }
                             _ => {}
                         }
@@ -270,6 +330,11 @@ async fn handle_action(
             tokio::spawn(async move {
                 if c.is_some() {
                     refresh_state(&shared2).await;
+                } else {
+                    let mut s = shared2.lock().await;
+                    s.add_log("error", "Refresh failed: no client");
+                    s.ui.loading = None;
+                    return;
                 }
                 let mut s = shared2.lock().await;
                 s.ui.loading = None;
@@ -291,16 +356,34 @@ async fn handle_action(
                 let m = s.connections.len().saturating_sub(1);
                 s.ui.selected_conn_idx = (s.ui.selected_conn_idx + 1).min(m);
             }
+            Logs => {
+                let m = s.logs.len().saturating_sub(1);
+                if s.ui.log_visual {
+                    s.ui.log_select_end = (s.ui.log_select_end + 1).min(m);
+                    s.ui.log_cursor = s.ui.log_select_end;
+                } else {
+                    s.ui.log_cursor = (s.ui.log_cursor + 1).min(m);
+                }
+            }
             _ => {}
         },
         Action::MoveUp => match s.ui.active_view {
             Proxies => s.ui.selected_node_idx = s.ui.selected_node_idx.saturating_sub(1),
             Connections => s.ui.selected_conn_idx = s.ui.selected_conn_idx.saturating_sub(1),
+            Logs => {
+                if s.ui.log_visual && s.ui.log_select_end > s.ui.log_select_start {
+                    s.ui.log_select_end = s.ui.log_select_end.saturating_sub(1);
+                    s.ui.log_cursor = s.ui.log_select_end;
+                } else {
+                    s.ui.log_cursor = s.ui.log_cursor.saturating_sub(1);
+                }
+            }
             _ => {}
         },
         Action::JumpTop => match s.ui.active_view {
             Proxies => s.ui.selected_node_idx = 0,
             Connections => s.ui.selected_conn_idx = 0,
+            Logs => { s.ui.log_cursor = 0; }
             _ => {}
         },
         Action::JumpBottom => match s.ui.active_view {
@@ -310,6 +393,7 @@ async fn handle_action(
                 s.ui.selected_node_idx = m;
             }
             Connections => s.ui.selected_conn_idx = s.connections.len().saturating_sub(1),
+            Logs => { s.ui.log_cursor = s.logs.len().saturating_sub(1); }
             _ => {}
         },
         Action::OpenModeSelector => {
@@ -331,20 +415,29 @@ async fn handle_action(
                 let any_active = tun_enabled || s.system_proxy_enabled;
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    if any_active {
+                    let result = if any_active {
                         if tun_enabled {
-                            let _ = c.patch_configs(
-                                serde_json::json!({"tun": {"enable": false}})
-                            ).await;
+                            c.patch_configs(serde_json::json!({"tun": {"enable": false}})).await
+                        } else {
+                            Ok(())
                         }
-                        crate::os::proxy::clear_system_proxy();
                     } else {
-                        let _ = c.patch_configs(
-                            serde_json::json!({"tun": {"enable": true}})
-                        ).await;
+                        c.patch_configs(serde_json::json!({"tun": {"enable": true}})).await
+                    };
+                    if any_active {
+                        crate::os::proxy::clear_system_proxy();
                     }
                     refresh_state(&shared2).await;
                     let mut s = shared2.lock().await;
+                    match result {
+                        Ok(()) => {
+                            let msg = if any_active && tun_enabled { "TUN disabled" }
+                                else if any_active { "Proxy disabled" }
+                                else { "TUN enabled" };
+                            s.add_log("info", msg);
+                        }
+                        Err(e) => s.add_log("error", &format!("Failed to toggle: {}", e)),
+                    }
                     s.ui.loading = None;
                 });
             }
@@ -358,10 +451,19 @@ async fn handle_action(
                 s.ui.loading = Some(LoadingKind::SwitchNode);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    let _ = ProxyManager::switch_node(&c, &gn, &nn).await;
-                    refresh_state(&shared2).await;
-                    let mut s = shared2.lock().await;
-                    s.ui.loading = None;
+                    match ProxyManager::switch_node(&c, &gn, &nn).await {
+                        Ok(()) => {
+                            refresh_state(&shared2).await;
+                            let mut s = shared2.lock().await;
+                            s.add_log("info", &format!("Switched to {}", nn));
+                            s.ui.loading = None;
+                        }
+                        Err(e) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("error", &format!("Failed to switch node: {}", e));
+                            s.ui.loading = None;
+                        }
+                    }
                 });
             }
         }
@@ -375,10 +477,19 @@ async fn handle_action(
                 s.ui.loading = Some(LoadingKind::TestNodeDelay);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    let _ = ProxyManager::test_node_delay(&c, &n, &url, timeout).await;
-                    refresh_state(&shared2).await;
-                    let mut s = shared2.lock().await;
-                    s.ui.loading = None;
+                    match ProxyManager::test_node_delay(&c, &n, &url, timeout).await {
+                        Ok(_) => {
+                            refresh_state(&shared2).await;
+                            let mut s = shared2.lock().await;
+                            s.add_log("info", &format!("Delay: {} tested", n));
+                            s.ui.loading = None;
+                        }
+                        Err(e) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("error", &format!("Delay test failed: {}", e));
+                            s.ui.loading = None;
+                        }
+                    }
                 });
             }
         }
@@ -391,10 +502,19 @@ async fn handle_action(
                 s.ui.loading = Some(LoadingKind::TestGroupDelay);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    let _ = ProxyManager::test_group_delay(&c, &g, &url, timeout).await;
-                    refresh_state(&shared2).await;
-                    let mut s = shared2.lock().await;
-                    s.ui.loading = None;
+                    match ProxyManager::test_group_delay(&c, &g, &url, timeout).await {
+                        Ok(_) => {
+                            refresh_state(&shared2).await;
+                            let mut s = shared2.lock().await;
+                            s.add_log("info", "Group delay test done");
+                            s.ui.loading = None;
+                        }
+                        Err(e) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("error", &format!("Group delay test failed: {}", e));
+                            s.ui.loading = None;
+                        }
+                    }
                 });
             }
         }
@@ -410,12 +530,37 @@ async fn handle_action(
             let idx = s.ui.selected_conn_idx;
             let id = s.connections.get(idx).map(|c| c.id.clone());
             if let (Some(c), Some(id)) = (client, id) {
-                tokio::spawn(async move { let _ = ConnectionManager::close_one(&c, &id).await; });
+                let shared2 = shared.clone();
+                let id2 = id.clone();
+                tokio::spawn(async move {
+                    match ConnectionManager::close_one(&c, &id).await {
+                        Ok(()) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("info", &format!("Closed {}", id2));
+                        }
+                        Err(e) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("error", &format!("Failed to close: {}", e));
+                        }
+                    }
+                });
             }
         }
         Action::CloseAllConnections => {
             if let Some(c) = client {
-                tokio::spawn(async move { let _ = ConnectionManager::close_all(&c).await; });
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    match ConnectionManager::close_all(&c).await {
+                        Ok(()) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("info", "All connections closed");
+                        }
+                        Err(e) => {
+                            let mut s = shared2.lock().await;
+                            s.add_log("error", &format!("Failed to close all: {}", e));
+                        }
+                    }
+                });
             }
         }
         Action::TogglePause => s.ui.log_paused = !s.ui.log_paused,
@@ -433,11 +578,17 @@ async fn handle_action(
             let c = s.client.clone();
             let shared2 = shared.clone();
             tokio::spawn(async move {
-                if let Some(ref client) = c {
-                    let _ = SubscriptionManager::update_all(&mut cfg, client).await;
-                }
+                let result = if let Some(ref client) = c {
+                    SubscriptionManager::update_all(&mut cfg, client).await
+                } else {
+                    Err("no client".into())
+                };
                 let mut state = shared2.lock().await;
                 state.config = cfg;
+                match result {
+                    Ok(_) => state.add_log("info", "Subscriptions updated"),
+                    Err(e) => state.add_log("error", &format!("Subscription update failed: {}", e)),
+                }
                 state.ui.loading = None;
             });
         }
@@ -485,6 +636,24 @@ async fn handle_action(
         Action::CommandMode => {
             s.ui.search_mode = true;
             s.ui.search_query.clear();
+        }
+        Action::LogVisual => {
+            if s.ui.active_view == Logs {
+                s.ui.log_visual = true;
+                s.ui.log_select_start = s.ui.log_cursor;
+                s.ui.log_select_end = s.ui.log_cursor;
+            }
+        }
+        Action::LogCopy => {
+            if s.ui.active_view == Logs {
+                if s.ui.log_visual {
+                    let text = collect_log_selection(s);
+                    copy_to_clipboard(&text);
+                    s.ui.log_visual = false;
+                } else if let Some(entry) = s.logs.get(s.ui.log_cursor) {
+                    copy_to_clipboard(&entry.payload);
+                }
+            }
         }
         Action::CycleLogLevel => {
             s.ui.log_level_filter = match s.ui.log_level_filter.as_deref() {
