@@ -35,9 +35,11 @@ pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
     }
 }
 
-/// Write proxy.conf (for detection) and proxy.env (for shell sourcing).
-/// User must add to ~/.zshenv:
-///   [ -f ~/.config/mioctl/proxy.env ] && source ~/.config/mioctl/proxy.env
+/// Write proxy.conf (detection), proxy.env (shell sourcing),
+/// and set env via systemd (cross-shell / cross-terminal).
+///
+/// User should add to ~/.zshenv (zsh) or ~/.profile (bash/login):
+///   [ -f ~/.config/mioctl/proxy.env ] && . ~/.config/mioctl/proxy.env
 #[allow(dead_code)]
 pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     // Write proxy.conf for detection
@@ -61,13 +63,35 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     }
     fs::write(&env_path, &content)?;
 
+    // Set via systemd — covers all shells, terminals, and GUI apps
+    let _ = std::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "set-environment",
+            &format!("HTTP_PROXY=http://127.0.0.1:{}", mixed_port),
+            &format!("HTTPS_PROXY=http://127.0.0.1:{}", mixed_port),
+            &format!("ALL_PROXY=socks5://127.0.0.1:{}", mixed_port),
+            "NO_PROXY=localhost,127.0.0.1,::1,.local",
+        ])
+        .output();
+
     Ok(())
 }
 
-/// Remove proxy.conf and proxy.env to disable system proxy.
+/// Remove proxy.conf, proxy.env, and unset via systemd.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
+    let _ = std::process::Command::new("systemctl")
+        .args([
+            "--user",
+            "unset-environment",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+        ])
+        .output();
 }
 
 #[cfg(test)]
