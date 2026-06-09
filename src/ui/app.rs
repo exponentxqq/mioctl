@@ -453,56 +453,44 @@ async fn handle_action(
             if let Some(c) = client {
                 s.ui.loading = Some(LoadingKind::ToggleProxy);
                 let tun_enabled = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
-                let any_active = tun_enabled || s.system_proxy_enabled;
                 let config_path = s.config.mihomo.config_path.clone();
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    // If any proxy is active, just disable everything
-                    if any_active {
-                        // Disable TUN in config file if it was enabled
-                        if tun_enabled {
-                            if let Err(e) = set_tun_config(&config_path, false) {
-                                let mut s = shared2.lock().await;
-                                s.add_log("error", &format!("Failed to update config: {}", e));
-                            }
-                        }
-                        // Clear system proxy
-                        crate::os::proxy::clear_system_proxy();
-
-                        // Restart mihomo if TUN was enabled (need restart to apply)
-                        if tun_enabled {
-                            let _ = c.restart().await;
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                            // Reconnect after restart
+                    if tun_enabled {
+                        // TUN ON → disable TUN, enable system proxy
+                        if let Err(e) = set_tun_config(&config_path, false) {
                             let mut s = shared2.lock().await;
-                            s.connect();
-                            drop(s);
+                            s.add_log("error", &format!("Failed to update config: {}", e));
                         }
+                        let _ = c.restart().await;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        let mut s = shared2.lock().await;
+                        s.connect();
+                        drop(s);
                         refresh_state(&shared2).await;
                         let mut s = shared2.lock().await;
-                        s.add_log("info", if tun_enabled { "TUN disabled" } else { "Proxy disabled" });
+                        if let Some(port) = s.mixed_port {
+                            if let Err(e) = crate::os::proxy::set_system_proxy(port) {
+                                s.add_log("error", &format!("System proxy failed: {}", e));
+                            }
+                        }
+                        s.add_log("info", "TUN disabled, system proxy enabled");
                         s.ui.loading = None;
                     } else {
-                        // Enable TUN + system proxy
+                        // TUN OFF → enable TUN, disable system proxy
+                        crate::os::proxy::clear_system_proxy();
                         match set_tun_config(&config_path, true) {
                             Ok(()) => {
                                 let _ = c.restart().await;
                                 tokio::time::sleep(Duration::from_secs(2)).await;
-                                // Reconnect after restart
                                 let mut s = shared2.lock().await;
                                 s.connect();
                                 drop(s);
                                 refresh_state(&shared2).await;
                                 let mut s = shared2.lock().await;
-                                // Set system proxy if mixed_port is known
-                                if let Some(port) = s.mixed_port {
-                                    if let Err(e) = crate::os::proxy::set_system_proxy(port) {
-                                        s.add_log("error", &format!("System proxy failed: {}", e));
-                                    }
-                                }
                                 let actual = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
                                 if actual {
-                                    s.add_log("info", "TUN + system proxy enabled");
+                                    s.add_log("info", "TUN enabled");
                                 } else {
                                     s.add_log("error", "TUN toggle: config updated but TUN did not start — check stack/permissions in mihomo config");
                                 }
