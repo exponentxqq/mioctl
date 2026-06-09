@@ -212,6 +212,44 @@ app_log_level = "info"
 
 Error handling: if clipboard access fails (e.g., Wayland without wl-clipboard), log the error and continue — copy failure is non-fatal.
 
+## Unit Tests
+
+All new logic must have corresponding unit tests.
+
+### state.rs tests
+
+| Test | What it covers |
+|------|---------------|
+| `test_add_log_info` | `add_log("info", "msg")` pushes entry with `[HH:MM:SS]` timestamp |
+| `test_add_log_error` | `add_log("error", "msg")` pushes entry with correct level |
+| `test_add_log_cap` | After `LOG_CAP + 10` calls, `logs.len()` stays at `LOG_CAP` |
+| `test_add_log_off` | When `app_log_level = "off"`, no entry is added |
+| `test_add_log_error_only` | When `app_log_level = "error"`, `add_log("info", ...)` is silently ignored |
+| `test_add_log_debug` | When `app_log_level = "debug"`, all levels pass through |
+| `test_log_ui_defaults` | Verify `log_cursor = 0`, `log_visual = false`, `log_select_start = 0`, `log_select_end = 0` |
+| `test_log_visual_selection_range` | `select_start ≤ select_end` after setting both, correct range |
+| `test_app_log_level_default` | Default `Preferences` has `app_log_level = "info"` |
+
+### keybindings.rs tests
+
+| Test | What it covers |
+|------|---------------|
+| `test_log_visual` | `parse_key(k('v'))` returns `Some(Action::LogVisual)` |
+| `test_log_copy` | `parse_key(k('y'))` returns `Some(Action::LogCopy)` |
+
+### mioctl_config.rs tests
+
+| Test | What it covers |
+|------|---------------|
+| `test_default_app_log_level` | `Preferences::default().app_log_level == "info"` |
+| `test_app_log_level_roundtrip` | Serialize + deserialize preserves `app_log_level` value |
+
+### integration tests (`tests/integration_test.rs`)
+
+| Test | What it covers |
+|------|---------------|
+| `test_add_log_shows_in_state` | Push a log entry, verify it appears in `state.logs` with correct level and timestamp prefix |
+
 ## Out of Scope
 
 - Scroll with mouse wheel (future work)
