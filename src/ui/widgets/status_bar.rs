@@ -11,16 +11,22 @@ use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     let connected_icon = if state.connected { "connected" } else { "disconnected" };
     let connected_color = if state.connected { T.green } else { T.red };
-    let left = Line::from(vec![
+
+    let mut spans = vec![
         Span::styled(format!(" {} ", connected_icon), Style::default().fg(connected_color)),
         Span::styled(format!("| mihomo {} ", state.version), Style::default().fg(T.text_secondary)),
-    ]);
-    let right = Line::from(vec![
-        Span::styled(
-            format!("{} | 1-5 views | :cmd | q quit ", state.last_updated),
-            Style::default().fg(T.text_secondary),
-        ),
-    ]);
-    let bar = Paragraph::new(vec![left, right]).style(Style::default().bg(T.surface));
+        Span::styled(format!("| {} ", state.last_updated), Style::default().fg(T.text_secondary)),
+    ];
+
+    if let Some(ref status) = state.ui.update_status {
+        spans.push(Span::styled(format!("| {} ", status), Style::default().fg(T.yellow)));
+    }
+
+    spans.push(Span::styled(
+        "| 1-5 views | ? help | q quit ",
+        Style::default().fg(T.text_secondary),
+    ));
+
+    let bar = Paragraph::new(Line::from(spans)).style(Style::default().bg(T.surface));
     f.render_widget(bar, area);
 }

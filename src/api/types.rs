@@ -291,4 +291,52 @@ mod tests {
         let entry: LogEntry = serde_json::from_str(json).unwrap();
         assert_eq!(entry.level, "info");
     }
+
+    #[test]
+    fn test_extract_groups_from_proxies() {
+        let json = r#"{
+            "proxies": {
+                "GLOBAL": {
+                    "name": "GLOBAL",
+                    "type": "Selector",
+                    "now": "DIRECT",
+                    "all": ["Node-A", "DIRECT"],
+                    "history": [],
+                    "udp": false,
+                    "alive": true
+                },
+                "Node-A": {
+                    "name": "Node-A",
+                    "type": "Shadowsocks",
+                    "now": null,
+                    "all": [],
+                    "history": [{"time": "2026-06-08T12:00:00Z", "delay": 45}],
+                    "udp": true,
+                    "alive": true
+                },
+                "Auto": {
+                    "name": "Auto",
+                    "type": "URLTest",
+                    "now": "Node-A",
+                    "all": ["Node-A", "Node-B"],
+                    "history": [],
+                    "udp": false,
+                    "alive": true
+                }
+            }
+        }"#;
+        let resp: ProxiesResponse = serde_json::from_str(json).unwrap();
+        let groups = crate::api::client::MihomoClient::extract_groups(&resp);
+        // Only GLOBAL and Auto have non-empty .all
+        assert_eq!(groups.len(), 2);
+        let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+        assert!(names.contains(&"GLOBAL"));
+        assert!(names.contains(&"Auto"));
+        assert!(!names.contains(&"Node-A"));
+
+        let global = groups.iter().find(|g| g.name == "GLOBAL").unwrap();
+        assert_eq!(global.group_type, "Selector");
+        assert_eq!(global.now.as_deref(), Some("DIRECT"));
+        assert_eq!(global.all.len(), 2);
+    }
 }

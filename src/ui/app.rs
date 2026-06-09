@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crossterm::{
-    event::{self, EnableMouseCapture, DisableMouseCapture, Event, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -12,16 +12,18 @@ use ratatui::{
 
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
+use crate::app::state::{ActiveView::*, AppState, ProxyMode, SharedState};
 use crate::subscription::manager::SubscriptionManager;
-use crate::app::state::{ActiveView::*, AppState, SharedState};
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
 use crate::ui::views::{connections, dashboard, help, logs, proxies, rules, settings, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
+const LOG_CAP: usize = 1000;
+
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
-    // Background: connect + load initial data (lock briefly, await unlocked)
+    // Background: connect + load initial data concurrently (max 3s wall time)
     let init_handle = {
         let s = state.clone();
         tokio::spawn(async move {
@@ -32,29 +34,66 @@ pub async fn run_tui() -> Result<(), String> {
             };
             let Some(ref client) = client else { return; };
 
-            // Do ALL network I/O WITHOUT holding the lock, with short timeouts
+            // Concurrent init — all requests in parallel, max 3s total
             let t = Duration::from_secs(3);
-            let version = tokio::time::timeout(t, client.get_version()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-            let proxies = tokio::time::timeout(t, ProxyManager::refresh_all(client)).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-            let conns = tokio::time::timeout(t, ConnectionManager::list(client)).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-            let rules = tokio::time::timeout(t, client.get_rules()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-            let traffic = tokio::time::timeout(t, client.get_traffic()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let (version_r, proxies_r, conns_r, rules_r, traffic_r, configs_r, memory_r) = tokio::join!(
+                tokio::time::timeout(t, client.get_version()),
+                tokio::time::timeout(t, ProxyManager::refresh_all(client)),
+                tokio::time::timeout(t, ConnectionManager::list(client)),
+                tokio::time::timeout(t, client.get_rules()),
+                tokio::time::timeout(t, client.get_traffic()),
+                tokio::time::timeout(t, client.get_configs()),
+                tokio::time::timeout(t, client.get_memory()),
+            );
+
+            // Unwrap timeout layer, keeping inner ApiResult
+            let version_r = version_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let proxies_r = proxies_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let conns_r = conns_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let rules_r = rules_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let traffic_r = traffic_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let configs_r = configs_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let memory_r = memory_r.unwrap_or(Err(crate::api::error::ApiError::Timeout));
 
             // Lock briefly to update state
-            let mut s = s.lock().await;
-            if let Ok(v) = version {
-                s.version = v.version;
-                s.connected = true;
+            {
+                let mut s = s.lock().await;
+                if let Ok(v) = version_r {
+                    s.version = v.version;
+                    s.connected = true;
+                }
+                if let Ok((p, g)) = proxies_r {
+                    s.proxies = p;
+                    s.groups = g;
+                }
+                if let Ok(c) = conns_r { s.connections = c; }
+                if let Ok(r) = rules_r { s.rules = r; }
+                if let Ok(t) = traffic_r { s.traffic = t; }
+                if let Ok(c) = configs_r {
+                    s.proxy_mode = match c.mode.as_deref() {
+                        Some("global") => ProxyMode::Global,
+                        Some("direct") => ProxyMode::Direct,
+                        _ => ProxyMode::Rule,
+                    };
+                }
+                if let Ok(m) = memory_r { s.memory = m; }
+                s.update_time();
             }
-            if let Ok((p, g)) = proxies {
-                s.proxies = p;
-                s.groups = g;
-                s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
-            }
-            if let Ok(c) = conns { s.connections = c; }
-            if let Ok(r) = rules { s.rules = r; }
-            if let Ok(t) = traffic { s.traffic = t; }
-            s.update_time();
+
+            // Start log stream — writes directly into state.logs
+            let log_client = client.clone();
+            let log_state = s.clone();
+            tokio::spawn(async move {
+                if let Ok(mut rx) = log_client.log_stream(None).await {
+                    while let Some(entry) = rx.recv().await {
+                        let mut state = log_state.lock().await;
+                        state.logs.push(entry);
+                        while state.logs.len() > LOG_CAP {
+                            state.logs.remove(0);
+                        }
+                    }
+                }
+            });
         })
     };
 
@@ -69,17 +108,32 @@ pub async fn run_tui() -> Result<(), String> {
     let mut proxy_table = ratatui::widgets::TableState::default();
     let mut conn_table = ratatui::widgets::TableState::default();
 
-    let poll_interval = Duration::from_secs(3);
-    let mut last_poll = tokio::time::Instant::now();
-
     loop {
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Release { continue; }
-                    if let Some(action) = parse_key(key) {
-                        let mut s = state.lock().await;
-                        if !handle_action(&action, &mut s).await { break; }
+                    let mut s = state.lock().await;
+                    // Search mode: capture keys as search input
+                    if s.ui.search_mode {
+                        match key.code {
+                            KeyCode::Esc => {
+                                s.ui.search_mode = false;
+                                s.ui.search_query.clear();
+                            }
+                            KeyCode::Enter => {
+                                s.ui.search_mode = false;
+                            }
+                            KeyCode::Backspace => {
+                                s.ui.search_query.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                s.ui.search_query.push(c);
+                            }
+                            _ => {}
+                        }
+                    } else if let Some(action) = parse_key(key) {
+                        if !handle_action(&action, &mut s, state.clone()).await { break; }
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -89,44 +143,12 @@ pub async fn run_tui() -> Result<(), String> {
                             s.ui.show_help = false;
                             s.ui.show_settings = false;
                         } else {
-                            handle_action(&action, &mut s).await;
+                            handle_action(&action, &mut s, state.clone()).await;
                         }
                     }
                 }
                 _ => {}
             }
-        }
-
-        if last_poll.elapsed() >= poll_interval {
-            let client = { state.lock().await.client.clone() };
-            if let Some(ref client) = client {
-                // Fire all requests concurrently with short timeout
-                let t = Duration::from_secs(3);
-                let (proxies, conns, rules, traffic) = tokio::join!(
-                    tokio::time::timeout(t, ProxyManager::refresh_all(client)),
-                    tokio::time::timeout(t, ConnectionManager::list(client)),
-                    tokio::time::timeout(t, client.get_rules()),
-                    tokio::time::timeout(t, client.get_traffic()),
-                );
-                let proxies = proxies.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-                let conns = conns.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-                let rules = rules.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-                let traffic = traffic.unwrap_or(Err(crate::api::error::ApiError::Timeout));
-
-                // Lock briefly to update state
-                let mut s = state.lock().await;
-                if let Ok((p, g)) = proxies {
-                    s.proxies = p;
-                    s.groups = g;
-                    s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
-                }
-                if let Ok(c) = conns { s.connections = c; }
-                if let Ok(r) = rules { s.rules = r; }
-                if let Ok(t) = traffic { s.traffic = t; }
-                spark.push(s.traffic.up, s.traffic.down);
-                s.update_time();
-            }
-            last_poll = tokio::time::Instant::now();
         }
 
         let s = state.lock().await;
@@ -138,9 +160,10 @@ pub async fn run_tui() -> Result<(), String> {
     // Abort background tasks so shutdown is instant
     init_handle.abort();
 
-    disable_raw_mode().map_err(|e| e.to_string())?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).map_err(|e| e.to_string())?;
-    terminal.show_cursor().map_err(|e| e.to_string())?;
+    // Fault-tolerant cleanup — attempt all steps even if some fail
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture);
+    let _ = terminal.show_cursor();
     Ok(())
 }
 
@@ -181,10 +204,21 @@ fn render_frame(
     }
 }
 
-async fn handle_action(action: &Action, s: &mut AppState) -> bool {
+async fn handle_action(
+    action: &Action, s: &mut AppState, shared: SharedState,
+) -> bool {
     let client = s.client.clone();
     match action {
         Action::Quit => return false,
+        Action::Refresh => {
+            let c = s.client.clone();
+            let shared2 = shared.clone();
+            tokio::spawn(async move {
+                if c.is_some() {
+                    refresh_state(&shared2).await;
+                }
+            });
+        }
         Action::SwitchView(i) => {
             let v = match i {
                 0 => Dashboard, 1 => Proxies, 2 => Connections, 3 => Rules, 4 => Logs, _ => return true,
@@ -225,7 +259,12 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
         Action::CycleMode => {
             if let Some(c) = client {
                 let mode = s.proxy_mode.clone();
-                tokio::spawn(async move { let _ = ProxyManager::cycle_proxy_mode(&c, mode).await; });
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    if ProxyManager::cycle_proxy_mode(&c, mode).await.is_ok() {
+                        refresh_state(&shared2).await;
+                    }
+                });
             }
         }
         Action::SwitchNode => {
@@ -234,7 +273,12 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
             let group_name = s.groups.get(i).map(|g| g.name.clone());
             let node_name = s.groups.get(i).and_then(|g| g.all.get(j).cloned());
             if let (Some(c), Some(gn), Some(nn)) = (client, group_name, node_name) {
-                tokio::spawn(async move { let _ = ProxyManager::switch_node(&c, &gn, &nn).await; });
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    if ProxyManager::switch_node(&c, &gn, &nn).await.is_ok() {
+                        refresh_state(&shared2).await;
+                    }
+                });
             }
         }
         Action::TestNodeDelay => {
@@ -244,7 +288,12 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(n)) = (client, node) {
-                tokio::spawn(async move { let _ = ProxyManager::test_node_delay(&c, &n, &url, timeout).await; });
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    if ProxyManager::test_node_delay(&c, &n, &url, timeout).await.is_ok() {
+                        refresh_state(&shared2).await;
+                    }
+                });
             }
         }
         Action::TestGroupDelay => {
@@ -253,7 +302,12 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(g)) = (client, group) {
-                tokio::spawn(async move { let _ = ProxyManager::test_group_delay(&c, &g, &url, timeout).await; });
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    if ProxyManager::test_group_delay(&c, &g, &url, timeout).await.is_ok() {
+                        refresh_state(&shared2).await;
+                    }
+                });
             }
         }
         Action::PrevGroup => {
@@ -288,16 +342,63 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
             tokio::spawn(async move {
                 if let Some(ref client) = c {
                     match SubscriptionManager::update_all(&mut cfg, client).await {
-                        Ok(r) => { /* status will be updated on next poll */ }
-                        Err(_) => {}
+                        Ok(r) => {
+                            let mut state = shared.lock().await;
+                            state.config = cfg;
+                            state.ui.update_status = Some(format!("Subs updated: {}", r));
+                        }
+                        Err(e) => {
+                            let mut state = shared.lock().await;
+                            state.ui.update_status = Some(format!("Subs failed: {}", e));
+                        }
                     }
                 }
             });
             s.ui.update_status = Some("Updating subscriptions...".into());
         }
         Action::Back => {
-            if s.ui.show_help { s.ui.show_help = false; }
+            if s.ui.search_mode {
+                s.ui.search_mode = false;
+                s.ui.search_query.clear();
+            } else if s.ui.show_help { s.ui.show_help = false; }
             else if s.ui.show_settings { s.ui.show_settings = false; }
+        }
+        Action::Search => {
+            s.ui.search_mode = true;
+            s.ui.search_query.clear();
+        }
+        Action::SearchNext => {
+            if !s.ui.search_query.is_empty() {
+                if let Some(group) = s.groups.get(s.ui.selected_group_idx) {
+                    let query = s.ui.search_query.to_lowercase();
+                    let start = s.ui.selected_node_idx + 1;
+                    for i in start..group.all.len() {
+                        if group.all[i].to_lowercase().contains(&query) {
+                            s.ui.selected_node_idx = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Action::SearchPrev => {
+            if !s.ui.search_query.is_empty() {
+                if let Some(group) = s.groups.get(s.ui.selected_group_idx) {
+                    let query = s.ui.search_query.to_lowercase();
+                    if s.ui.selected_node_idx > 0 {
+                        for i in (0..s.ui.selected_node_idx).rev() {
+                            if group.all[i].to_lowercase().contains(&query) {
+                                s.ui.selected_node_idx = i;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Action::CommandMode => {
+            s.ui.search_mode = true;
+            s.ui.search_query.clear();
         }
         Action::CycleLogLevel => {
             s.ui.log_level_filter = match s.ui.log_level_filter.as_deref() {
@@ -309,7 +410,51 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
                 _ => None,
             };
         }
-        _ => {}
     }
     true
+}
+
+/// Fetch all data from mihomo API and update shared state.
+/// Clamps UI selections to valid ranges after updating groups.
+async fn refresh_state(shared: &SharedState) {
+    let client = { shared.lock().await.client.clone() };
+    let Some(ref client) = client else { return };
+
+    let t = Duration::from_secs(3);
+    let (proxies, conns, rules, traffic, configs, memory) = tokio::join!(
+        tokio::time::timeout(t, ProxyManager::refresh_all(client)),
+        tokio::time::timeout(t, ConnectionManager::list(client)),
+        tokio::time::timeout(t, client.get_rules()),
+        tokio::time::timeout(t, client.get_traffic()),
+        tokio::time::timeout(t, client.get_configs()),
+        tokio::time::timeout(t, client.get_memory()),
+    );
+    let proxies = proxies.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+    let conns = conns.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+    let rules = rules.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+    let traffic = traffic.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+    let configs = configs.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+    let memory = memory.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+
+    let mut s = shared.lock().await;
+    if let Ok((p, g)) = proxies {
+        s.proxies = p;
+        s.groups = g;
+        s.ui.selected_group_idx = s.ui.selected_group_idx.min(s.groups.len().saturating_sub(1));
+        if let Some(grp) = s.groups.get(s.ui.selected_group_idx) {
+            s.ui.selected_node_idx = s.ui.selected_node_idx.min(grp.all.len().saturating_sub(1));
+        }
+    }
+    if let Ok(c) = conns { s.connections = c; }
+    if let Ok(r) = rules { s.rules = r; }
+    if let Ok(t) = traffic { s.traffic = t; }
+    if let Ok(c) = configs {
+        s.proxy_mode = match c.mode.as_deref() {
+            Some("global") => ProxyMode::Global,
+            Some("direct") => ProxyMode::Direct,
+            _ => ProxyMode::Rule,
+        };
+    }
+    if let Ok(m) = memory { s.memory = m; }
+    s.update_time();
 }

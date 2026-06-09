@@ -9,7 +9,11 @@ use crate::app::state::AppState;
 use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
-    let log_lines: Vec<Line> = state.logs.iter().map(|entry| {
+    let filtered: Vec<&crate::api::types::LogEntry> = match state.ui.log_level_filter.as_deref() {
+        Some(level) => state.logs.iter().filter(|e| e.level == level).collect(),
+        None => state.logs.iter().collect(),
+    };
+    let log_lines: Vec<Line> = filtered.iter().map(|entry| {
         let color = match entry.level.as_str() {
             "error" => T.red, "warning" => T.yellow, "debug" => T.text_secondary, _ => T.green,
         };
@@ -20,8 +24,8 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     }).collect();
     let paused = if state.ui.log_paused { " [PAUSED]" } else { "" };
     let level = state.ui.log_level_filter.as_deref().unwrap_or("all");
-    let block = Block::default().title(format!("Logs{} | level: {} | s:switch space:pause", paused, level));
+    let block = Block::default().title(format!("Logs ({}){} | level: {} | s:switch space:pause", filtered.len(), paused, level));
     let para = Paragraph::new(log_lines).block(block).wrap(Wrap { trim: true })
-        .scroll(((state.logs.len().saturating_sub(1)) as u16, 0));
+        .scroll(((filtered.len().saturating_sub(1).min(u16::MAX as usize)) as u16, 0));
     f.render_widget(para, area);
 }

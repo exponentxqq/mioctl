@@ -1,7 +1,6 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
-    text::{Line, Span},
+    layout::Rect,
+    style::Style,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
@@ -15,9 +14,9 @@ const HELP_TEXT: &str = r#"
  k/↑  Move up               T      Test group delay
  g    Jump to top           h/←    Prev group
  G    Jump to bottom        l/→    Next group
- /    Search                Esc    Back to groups
- n/N  Next/prev search
- :    Command mode          Connections
+ /    Search nodes          Esc    Back / close
+ n/N  Next/prev match
+ r    Refresh data          Connections
  m    Cycle proxy mode      ───────────
  q    Quit                  d      Close connection
  ?    Toggle help           D      Close all

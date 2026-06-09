@@ -12,7 +12,8 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
         .style(Style::default().fg(T.text_secondary));
     let rows: Vec<Row> = state.connections.iter().enumerate().map(|(i, c)| {
         let source = format!("{}:{}", c.metadata.source_ip, c.metadata.source_port);
-        let dest = format!("{}:{}", c.metadata.destination_ip, c.metadata.destination_port);
+        let dest_host = if c.metadata.host.is_empty() { &c.metadata.destination_ip } else { &c.metadata.host };
+        let dest = format!("{}:{}", dest_host, c.metadata.destination_port);
         let proxy = c.chains.last().cloned().unwrap_or_default();
         let traffic = format_size(c.download + c.upload);
         let style = if i == state.ui.selected_conn_idx {
@@ -26,6 +27,9 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
     let table = Table::new(rows, [Constraint::Ratio(1,5); 5])
         .header(header)
         .block(Block::default().title("Connections"));
+
+    // Sync TableState selection with selected_conn_idx
+    table_state.select(Some(state.ui.selected_conn_idx));
     f.render_stateful_widget(table, area, table_state);
 }
 

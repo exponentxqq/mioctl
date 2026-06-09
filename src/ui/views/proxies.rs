@@ -7,6 +7,7 @@ use ratatui::{
 };
 use crate::app::state::AppState;
 use crate::ui::theme::CATPPUCCIN_MOCHA as T;
+use crate::ui::util::readable_name;
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut TableState) {
     let chunks = Layout::default()
@@ -33,7 +34,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
         } else {
             Style::default().fg(T.text)
         };
-        ListItem::new(Line::from(Span::styled(format!("{} ({})", g.name, g.all.len()), style)))
+        ListItem::new(Line::from(Span::styled(format!("{} ({})", readable_name(&g.name), g.all.len()), style)))
     }).collect();
     let groups = List::new(group_items).block(Block::default().title("Groups").borders(Borders::RIGHT));
     f.render_widget(groups, chunks[0]);
@@ -46,25 +47,53 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
         }
     };
 
+    // Filter nodes by search query
+    let visible_nodes: Vec<(usize, &String)> = if state.ui.search_query.is_empty() {
+        group.all.iter().enumerate().collect()
+    } else {
+        let query = state.ui.search_query.to_lowercase();
+        group.all.iter().enumerate()
+            .filter(|(_, name)| name.to_lowercase().contains(&query))
+            .collect()
+    };
+
     let header = Row::new(vec!["Name", "Type", "Latency"]).style(Style::default().fg(T.text_secondary));
     let selected_name = group.now.as_deref().unwrap_or("");
-    let rows: Vec<Row> = group.all.iter().enumerate().map(|(i, name)| {
-        let proxy = state.proxies.proxies.get(name);
+
+    let search_query = state.ui.search_query.to_lowercase();
+    let rows: Vec<Row> = visible_nodes.iter().map(|(orig_idx, name)| {
+        let proxy = state.proxies.proxies.get(*name);
         let ptype = proxy.map(|p| p.proxy_type.as_str()).unwrap_or("?");
         let delay = proxy.and_then(|p| p.history.last().map(|h| format!("{}ms", h.delay))).unwrap_or_else(|| "-".into());
-        let prefix = if name == selected_name { "* " } else { "  " };
-        let style = if i == state.ui.selected_node_idx {
+        let prefix = if *name == selected_name { "* " } else { "  " };
+        let is_match = !search_query.is_empty() && name.to_lowercase().contains(&search_query);
+        let style = if *orig_idx == state.ui.selected_node_idx {
             Style::default().fg(T.primary).bg(T.surface)
-        } else if name == selected_name {
+        } else if **name == selected_name {
             Style::default().fg(T.green)
+        } else if is_match {
+            Style::default().fg(T.yellow)
         } else {
             Style::default().fg(T.text)
         };
-        Row::new(vec![format!("{}{}", prefix, name), ptype.into(), delay]).style(style)
+        Row::new(vec![format!("{}{}", prefix, readable_name(name)), ptype.into(), delay]).style(style)
     }).collect();
+
+    let title = if state.ui.search_mode {
+        format!("Nodes - {} [search: /{}]", group.name, state.ui.search_query)
+    } else if !state.ui.search_query.is_empty() {
+        format!("Nodes - {} [filter: {}]", group.name, state.ui.search_query)
+    } else {
+        format!("Nodes - {}", group.name)
+    };
 
     let table = Table::new(rows, [Constraint::Ratio(2,5), Constraint::Ratio(1,5), Constraint::Ratio(2,5)])
         .header(header)
-        .block(Block::default().title(format!("Nodes - {}", group.name)));
+        .block(Block::default().title(title));
+
+    // Sync TableState selection with visible_nodes index
+    let visible_idx = visible_nodes.iter().position(|(orig_idx, _)| *orig_idx == state.ui.selected_node_idx);
+    table_state.select(visible_idx);
+
     f.render_stateful_widget(table, chunks[1], table_state);
 }

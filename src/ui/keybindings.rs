@@ -60,6 +60,7 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
         KeyEvent { code: KeyCode::Char('D'), modifiers: KeyModifiers::SHIFT, .. } => Some(Action::CloseAllConnections),
         KeyEvent { code: KeyCode::Char(' '), .. } => Some(Action::TogglePause),
         KeyEvent { code: KeyCode::Char('s'), .. } => Some(Action::CycleLogLevel),
+        KeyEvent { code: KeyCode::Char('r'), .. } => Some(Action::Refresh),
         KeyEvent { code: KeyCode::Char('?'), .. } => Some(Action::ToggleHelp),
         _ => None,
     }
@@ -71,13 +72,13 @@ pub fn parse_mouse(event: MouseEvent) -> Option<Action> {
             let x = event.column;
             let row = event.row as usize;
             if x < 16 {
-                // Sidebar rows: 1-5 = views, 7 = Settings, 8 = Update Subs
+                // Sidebar rows: 0-4 = views, 6 = Settings, 7 = Update Subs
                 match row {
-                    1..=5 => {
-                        return Some(Action::SwitchView(row.saturating_sub(1)));
+                    0..=4 => {
+                        return Some(Action::SwitchView(row));
                     }
-                    7 => return Some(Action::ShowSettings),
-                    8 => return Some(Action::UpdateSubs),
+                    6 => return Some(Action::ShowSettings),
+                    7 => return Some(Action::UpdateSubs),
                     _ => {}
                 }
             }

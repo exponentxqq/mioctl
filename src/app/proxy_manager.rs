@@ -8,7 +8,7 @@ pub struct ProxyManager;
 impl ProxyManager {
     pub async fn refresh_all(client: &MihomoClient) -> ApiResult<(ProxiesResponse, Vec<Group>)> {
         let proxies = client.get_proxies().await?;
-        let groups = client.get_groups().await?;
+        let groups = MihomoClient::extract_groups(&proxies);
         Ok((proxies, groups))
     }
 
@@ -51,12 +51,17 @@ impl ProxyManager {
         client: &MihomoClient,
         current: ProxyMode,
     ) -> ApiResult<ProxyMode> {
-        let (name, next) = match current {
-            ProxyMode::Global => ("DIRECT", ProxyMode::Direct),
-            ProxyMode::Rule => ("GLOBAL", ProxyMode::Global),
-            ProxyMode::Direct => ("GLOBAL", ProxyMode::Rule),
+        let next = match current {
+            ProxyMode::Global => ProxyMode::Direct,
+            ProxyMode::Rule => ProxyMode::Global,
+            ProxyMode::Direct => ProxyMode::Rule,
         };
-        client.select_proxy("GLOBAL", name).await?;
+        let mode_str = match next {
+            ProxyMode::Global => "global",
+            ProxyMode::Rule => "rule",
+            ProxyMode::Direct => "direct",
+        };
+        client.patch_configs(serde_json::json!({"mode": mode_str})).await?;
         Ok(next)
     }
 }
