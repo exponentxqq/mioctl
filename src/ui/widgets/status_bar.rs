@@ -8,6 +8,8 @@ use ratatui::{
 use crate::app::state::AppState;
 use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     let connected_icon = if state.connected { "connected" } else { "disconnected" };
     let connected_color = if state.connected { T.green } else { T.red };
@@ -18,8 +20,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
         Span::styled(format!("| {} ", state.last_updated), Style::default().fg(T.text_secondary)),
     ];
 
-    if let Some(ref status) = state.ui.update_status {
-        spans.push(Span::styled(format!("| {} ", status), Style::default().fg(T.yellow)));
+    if let Some(ref kind) = state.ui.loading {
+        let frame = SPINNER[state.ui.spinner_frame as usize % SPINNER.len()];
+        spans.push(Span::styled(
+            format!("{} {} ", frame, kind.as_str()),
+            Style::default().fg(T.yellow),
+        ));
     }
 
     spans.push(Span::styled(

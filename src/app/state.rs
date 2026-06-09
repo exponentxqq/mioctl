@@ -5,6 +5,34 @@ use crate::api::types::*;
 use crate::config::mioctl_config::MioctlConfig;
 use chrono::Local;
 
+/// Identifies which async operation is currently in progress.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadingKind {
+    Init,
+    Refresh,
+    SwitchMode,
+    SwitchNode,
+    ToggleProxy,
+    TestNodeDelay,
+    TestGroupDelay,
+    UpdateSubs,
+}
+
+impl LoadingKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Init => "Loading...",
+            Self::Refresh => "Refreshing...",
+            Self::SwitchMode => "Switching mode...",
+            Self::SwitchNode => "Switching node...",
+            Self::ToggleProxy => "Toggling proxy...",
+            Self::TestNodeDelay => "Testing delay...",
+            Self::TestGroupDelay => "Testing group delay...",
+            Self::UpdateSubs => "Updating subscriptions...",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProxyMode {
     Global,
@@ -35,7 +63,8 @@ pub struct UiState {
     pub show_settings: bool,
     pub show_mode_selector: bool,
     pub mode_selector_idx: usize,
-    pub update_status: Option<String>,
+    pub loading: Option<LoadingKind>,
+    pub spinner_frame: u8,
 }
 
 impl Default for UiState {
@@ -53,7 +82,8 @@ impl Default for UiState {
             show_settings: false,
             show_mode_selector: false,
             mode_selector_idx: 0,
-            update_status: None,
+            loading: None,
+            spinner_frame: 0,
         }
     }
 }
@@ -94,7 +124,10 @@ impl AppState {
         Self {
             config: MioctlConfig::load(),
             client: None,
-            ui: UiState::default(),
+            ui: UiState {
+                loading: Some(LoadingKind::Init),
+                ..UiState::default()
+            },
             proxies: ProxiesResponse {
                 proxies: std::collections::HashMap::new(),
             },
@@ -144,6 +177,8 @@ mod tests {
         assert_eq!(ui.mode_selector_idx, 0);
         assert!(!ui.show_help);
         assert!(!ui.show_settings);
+        assert!(ui.loading.is_none());
+        assert_eq!(ui.spinner_frame, 0);
     }
 
     #[test]
@@ -157,5 +192,41 @@ mod tests {
     fn test_proxy_mode_default_is_rule() {
         let state = AppState::new();
         assert_eq!(state.proxy_mode, ProxyMode::Rule);
+    }
+
+    #[test]
+    fn test_app_state_init_shows_loading() {
+        let state = AppState::new();
+        assert_eq!(state.ui.loading, Some(LoadingKind::Init));
+    }
+
+    #[test]
+    fn test_loading_kind_as_str() {
+        assert_eq!(LoadingKind::Init.as_str(), "Loading...");
+        assert_eq!(LoadingKind::Refresh.as_str(), "Refreshing...");
+        assert_eq!(LoadingKind::SwitchMode.as_str(), "Switching mode...");
+        assert_eq!(LoadingKind::SwitchNode.as_str(), "Switching node...");
+        assert_eq!(LoadingKind::ToggleProxy.as_str(), "Toggling proxy...");
+        assert_eq!(LoadingKind::TestNodeDelay.as_str(), "Testing delay...");
+        assert_eq!(LoadingKind::TestGroupDelay.as_str(), "Testing group delay...");
+        assert_eq!(LoadingKind::UpdateSubs.as_str(), "Updating subscriptions...");
+    }
+
+    #[test]
+    fn test_spinner_frame_wraps() {
+        let mut ui = UiState::default();
+        ui.spinner_frame = 9;
+        ui.spinner_frame = (ui.spinner_frame + 1) % 10;
+        assert_eq!(ui.spinner_frame, 0);
+    }
+
+    #[test]
+    fn test_loading_set_and_clear() {
+        let mut ui = UiState::default();
+        assert!(ui.loading.is_none());
+        ui.loading = Some(LoadingKind::SwitchMode);
+        assert_eq!(ui.loading, Some(LoadingKind::SwitchMode));
+        ui.loading = None;
+        assert!(ui.loading.is_none());
     }
 }

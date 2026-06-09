@@ -5,10 +5,23 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
-use crate::app::state::AppState;
+use crate::app::state::{AppState, LoadingKind};
 use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use crate::ui::util::readable_name;
 use crate::ui::widgets::sparkline::TrafficSpark;
+
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Returns the card value to display, showing spinner when a relevant
+/// loading operation is active.
+fn card_value(normal: &str, loading_kind: LoadingKind, state: &AppState) -> String {
+    if state.ui.loading.as_ref() == Some(&loading_kind) {
+        let frame = SPINNER[state.ui.spinner_frame as usize % SPINNER.len()];
+        format!("{} ...", frame)
+    } else {
+        normal.to_string()
+    }
+}
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState, spark: &TrafficSpark) {
     let chunks = Layout::default()
@@ -32,7 +45,8 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, spark: &TrafficSpark)
         ])
         .split(chunks[0]);
 
-    card(f, cards1[0], "Mode", &format!("{:?}", state.proxy_mode), T.primary);
+    let mode_val = card_value(&format!("{:?}", state.proxy_mode), LoadingKind::SwitchMode, state);
+    card(f, cards1[0], "Mode", &mode_val, T.primary);
     card(f, cards1[1], "Upload", &format!("{:.1} KB/s", state.traffic.up as f64 / 1024.0), T.green);
     card(f, cards1[2], "Download", &format!("{:.1} KB/s", state.traffic.down as f64 / 1024.0), T.red);
     card(f, cards1[3], "Conns", &state.connections.len().to_string(), T.yellow);
@@ -50,10 +64,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, spark: &TrafficSpark)
 
     let tun_enabled = state.tun.as_ref().map(|t| t.enable).unwrap_or(false);
     let tun_color = if tun_enabled { T.green } else { T.surface };
-    card(f, cards2[0], "TUN", if tun_enabled { "ON" } else { "OFF" }, tun_color);
+    let tun_val = card_value(if tun_enabled { "ON" } else { "OFF" }, LoadingKind::ToggleProxy, state);
+    card(f, cards2[0], "TUN", &tun_val, tun_color);
 
     let sp_color = if state.system_proxy_enabled { T.green } else { T.surface };
-    card(f, cards2[1], "SysProxy", if state.system_proxy_enabled { "ON" } else { "OFF" }, sp_color);
+    let sp_val = card_value(if state.system_proxy_enabled { "ON" } else { "OFF" }, LoadingKind::ToggleProxy, state);
+    card(f, cards2[1], "SysProxy", &sp_val, sp_color);
 
     let port_str = state.mixed_port
         .map(|p| format!(":{}", p))

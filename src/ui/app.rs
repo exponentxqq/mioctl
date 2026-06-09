@@ -13,7 +13,7 @@ use ratatui::{
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
 use crate::os;
-use crate::app::state::{ActiveView::*, AppState, ProxyMode, SharedState};
+use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState};
 use crate::subscription::manager::SubscriptionManager;
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
 use crate::ui::views::{connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar};
@@ -83,6 +83,7 @@ pub async fn run_tui() -> Result<(), String> {
                 }
                 if let Ok(m) = memory_r { s.memory = m; }
                 s.update_time();
+                s.ui.loading = None;
             }
 
             // Start log stream — writes directly into state.logs
@@ -155,14 +156,16 @@ pub async fn run_tui() -> Result<(), String> {
                                     _ => ProxyMode::Rule,
                                 };
                                 s.ui.show_mode_selector = false;
+                                s.ui.loading = Some(LoadingKind::SwitchMode);
                                 let c = s.client.clone();
                                 let s2 = state.clone();
                                 tokio::spawn(async move {
                                     if let Some(ref client) = c {
-                                        if ProxyManager::set_proxy_mode(client, &target).await.is_ok() {
-                                            refresh_state(&s2).await;
-                                        }
+                                        let _ = ProxyManager::set_proxy_mode(client, &target).await;
+                                        refresh_state(&s2).await;
                                     }
+                                    let mut s = s2.lock().await;
+                                    s.ui.loading = None;
                                 });
                             }
                             KeyCode::Esc => {
@@ -187,6 +190,14 @@ pub async fn run_tui() -> Result<(), String> {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Advance spinner animation frame if loading
+        {
+            let mut s = state.lock().await;
+            if s.ui.loading.is_some() {
+                s.ui.spinner_frame = (s.ui.spinner_frame + 1) % 10;
             }
         }
 
@@ -255,12 +266,15 @@ async fn handle_action(
     match action {
         Action::Quit => return false,
         Action::Refresh => {
+            s.ui.loading = Some(LoadingKind::Refresh);
             let c = s.client.clone();
             let shared2 = shared.clone();
             tokio::spawn(async move {
                 if c.is_some() {
                     refresh_state(&shared2).await;
                 }
+                let mut s = shared2.lock().await;
+                s.ui.loading = None;
             });
         }
         Action::SwitchView(i) => {
@@ -314,6 +328,7 @@ async fn handle_action(
         }
         Action::ToggleProxy => {
             if let Some(c) = client {
+                s.ui.loading = Some(LoadingKind::ToggleProxy);
                 let tun_enabled = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
                 let any_active = tun_enabled || s.system_proxy_enabled;
                 let shared2 = shared.clone();
@@ -331,6 +346,8 @@ async fn handle_action(
                         ).await;
                     }
                     refresh_state(&shared2).await;
+                    let mut s = shared2.lock().await;
+                    s.ui.loading = None;
                 });
             }
         }
@@ -340,11 +357,13 @@ async fn handle_action(
             let group_name = s.groups.get(i).map(|g| g.name.clone());
             let node_name = s.groups.get(i).and_then(|g| g.all.get(j).cloned());
             if let (Some(c), Some(gn), Some(nn)) = (client, group_name, node_name) {
+                s.ui.loading = Some(LoadingKind::SwitchNode);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    if ProxyManager::switch_node(&c, &gn, &nn).await.is_ok() {
-                        refresh_state(&shared2).await;
-                    }
+                    let _ = ProxyManager::switch_node(&c, &gn, &nn).await;
+                    refresh_state(&shared2).await;
+                    let mut s = shared2.lock().await;
+                    s.ui.loading = None;
                 });
             }
         }
@@ -355,11 +374,13 @@ async fn handle_action(
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(n)) = (client, node) {
+                s.ui.loading = Some(LoadingKind::TestNodeDelay);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    if ProxyManager::test_node_delay(&c, &n, &url, timeout).await.is_ok() {
-                        refresh_state(&shared2).await;
-                    }
+                    let _ = ProxyManager::test_node_delay(&c, &n, &url, timeout).await;
+                    refresh_state(&shared2).await;
+                    let mut s = shared2.lock().await;
+                    s.ui.loading = None;
                 });
             }
         }
@@ -369,11 +390,13 @@ async fn handle_action(
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(g)) = (client, group) {
+                s.ui.loading = Some(LoadingKind::TestGroupDelay);
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    if ProxyManager::test_group_delay(&c, &g, &url, timeout).await.is_ok() {
-                        refresh_state(&shared2).await;
-                    }
+                    let _ = ProxyManager::test_group_delay(&c, &g, &url, timeout).await;
+                    refresh_state(&shared2).await;
+                    let mut s = shared2.lock().await;
+                    s.ui.loading = None;
                 });
             }
         }
@@ -407,24 +430,18 @@ async fn handle_action(
             }
         }
         Action::UpdateSubs => {
+            s.ui.loading = Some(LoadingKind::UpdateSubs);
             let mut cfg = s.config.clone();
             let c = s.client.clone();
+            let shared2 = shared.clone();
             tokio::spawn(async move {
                 if let Some(ref client) = c {
-                    match SubscriptionManager::update_all(&mut cfg, client).await {
-                        Ok(r) => {
-                            let mut state = shared.lock().await;
-                            state.config = cfg;
-                            state.ui.update_status = Some(format!("Subs updated: {}", r));
-                        }
-                        Err(e) => {
-                            let mut state = shared.lock().await;
-                            state.ui.update_status = Some(format!("Subs failed: {}", e));
-                        }
-                    }
+                    let _ = SubscriptionManager::update_all(&mut cfg, client).await;
                 }
+                let mut state = shared2.lock().await;
+                state.config = cfg;
+                state.ui.loading = None;
             });
-            s.ui.update_status = Some("Updating subscriptions...".into());
         }
         Action::Back => {
             if s.ui.search_mode {
