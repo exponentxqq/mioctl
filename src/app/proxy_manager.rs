@@ -47,22 +47,16 @@ impl ProxyManager {
         ProxyMode::Rule
     }
 
-    pub async fn cycle_proxy_mode(
+    pub async fn set_proxy_mode(
         client: &MihomoClient,
-        current: ProxyMode,
-    ) -> ApiResult<ProxyMode> {
-        let next = match current {
-            ProxyMode::Global => ProxyMode::Direct,
-            ProxyMode::Rule => ProxyMode::Global,
-            ProxyMode::Direct => ProxyMode::Rule,
-        };
-        let mode_str = match next {
+        mode: &ProxyMode,
+    ) -> ApiResult<()> {
+        let mode_str = match mode {
             ProxyMode::Global => "global",
             ProxyMode::Rule => "rule",
             ProxyMode::Direct => "direct",
         };
-        client.patch_configs(serde_json::json!({"mode": mode_str})).await?;
-        Ok(next)
+        client.patch_configs(serde_json::json!({"mode": mode_str})).await
     }
 }
 
