@@ -7,10 +7,21 @@ pub struct MihomoConnection {
     pub external_controller: String,
     #[serde(default)]
     pub secret: String,
+    #[serde(default = "default_config_path")]
+    pub config_path: String,
 }
 
 fn default_host() -> String {
     "127.0.0.1:9090".into()
+}
+fn default_config_path() -> String {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("mihomo")
+        .join("config.yaml")
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +104,7 @@ impl Default for MioctlConfig {
             mihomo: MihomoConnection {
                 external_controller: default_host(),
                 secret: String::new(),
+                config_path: default_config_path(),
             },
             subscriptions: Subscriptions::default(),
             preferences: Preferences::default(),

@@ -41,6 +41,23 @@ fn copy_to_clipboard(text: &str) {
     }
 }
 
+/// Toggle `tun.enable` in a mihomo YAML config file.
+fn set_tun_config(path: &str, enable: bool) -> Result<(), String> {
+    let content = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path, e))?;
+    let mut doc: serde_yaml::Value = serde_yaml::from_str(&content)
+        .map_err(|e| format!("parse YAML: {}", e))?;
+    let tun = doc["tun"]
+        .as_mapping_mut()
+        .ok_or_else(|| "no 'tun' section in config".to_string())?;
+    tun.insert(
+        serde_yaml::Value::String("enable".into()),
+        serde_yaml::Value::Bool(enable),
+    );
+    let out = serde_yaml::to_string(&doc).map_err(|e| format!("serialize YAML: {}", e))?;
+    std::fs::write(path, out).map_err(|e| format!("write {}: {}", path, e))?;
+    Ok(())
+}
+
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
@@ -413,52 +430,61 @@ async fn handle_action(
                 s.ui.loading = Some(LoadingKind::ToggleProxy);
                 let tun_enabled = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
                 let any_active = tun_enabled || s.system_proxy_enabled;
+                let config_path = s.config.mihomo.config_path.clone();
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    let (payload, action_str) = if any_active {
-                        if tun_enabled {
-                            (serde_json::json!({"tun": {"enable": false}}), "disable TUN")
-                        } else {
-                            // Just clear system proxy, don't touch TUN
-                            (serde_json::json!({}), "disable proxy")
-                        }
-                    } else {
-                        (serde_json::json!({"tun": {"enable": true}}), "enable TUN")
-                    };
-
-                    let result = if payload.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-                        Ok(())
-                    } else {
-                        c.patch_configs(payload.clone()).await
-                    };
-
+                    // If any proxy is active, just disable everything
                     if any_active {
-                        crate::os::proxy::clear_system_proxy();
-                    }
-
-                    refresh_state(&shared2).await;
-
-                    let mut s = shared2.lock().await;
-                    // Diagnostic: log payload + post-refresh TUN state
-                    let tun_state = s.tun.as_ref().map(|t| (t.enable, t.stack.clone()));
-                    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
-                    s.add_log("info", &format!(
-                        "[DIAG] {} → PATCH {} → result={:?} → tun_after={:?}",
-                        action_str,
-                        payload_str,
-                        result.as_ref().map(|_| "ok").unwrap_or("err"),
-                        tun_state,
-                    ));
-                    match result {
-                        Ok(()) => {
-                            let msg = if any_active && tun_enabled { "TUN disabled" }
-                                else if any_active { "Proxy disabled" }
-                                else { "TUN enabled" };
-                            s.add_log("info", msg);
+                        // Disable TUN in config file if it was enabled
+                        if tun_enabled {
+                            if let Err(e) = set_tun_config(&config_path, false) {
+                                let mut s = shared2.lock().await;
+                                s.add_log("error", &format!("Failed to update config: {}", e));
+                            }
                         }
-                        Err(e) => s.add_log("error", &format!("Failed to toggle: {}", e)),
+                        // Clear system proxy
+                        crate::os::proxy::clear_system_proxy();
+
+                        // Restart mihomo if TUN was enabled (need restart to apply)
+                        if tun_enabled {
+                            let _ = c.restart().await;
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            // Reconnect after restart
+                            let mut s = shared2.lock().await;
+                            s.connect();
+                            drop(s);
+                        }
+                        refresh_state(&shared2).await;
+                        let mut s = shared2.lock().await;
+                        s.add_log("info", if tun_enabled { "TUN disabled" } else { "Proxy disabled" });
+                        s.ui.loading = None;
+                    } else {
+                        // Enable TUN: modify config file, restart mihomo
+                        match set_tun_config(&config_path, true) {
+                            Ok(()) => {
+                                let _ = c.restart().await;
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                // Reconnect after restart
+                                let mut s = shared2.lock().await;
+                                s.connect();
+                                drop(s);
+                                refresh_state(&shared2).await;
+                                let mut s = shared2.lock().await;
+                                let actual = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
+                                if actual {
+                                    s.add_log("info", "TUN enabled");
+                                } else {
+                                    s.add_log("error", "TUN toggle: config updated but TUN did not start — check stack/permissions in mihomo config");
+                                }
+                                s.ui.loading = None;
+                            }
+                            Err(e) => {
+                                let mut s = shared2.lock().await;
+                                s.add_log("error", &format!("Failed to update config: {}", e));
+                                s.ui.loading = None;
+                            }
+                        }
                     }
-                    s.ui.loading = None;
                 });
             }
         }
@@ -736,4 +762,62 @@ async fn refresh_state(shared: &SharedState) {
     }
     if let Ok(m) = memory { s.memory = m; }
     s.update_time();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+
+    #[test]
+    fn test_set_tun_enable() {
+        let yaml = "tun:\n  enable: false\n  stack: system\n";
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(&path, yaml).unwrap();
+
+        set_tun_config(&path, true).unwrap();
+        let result = std::fs::read_to_string(&path).unwrap();
+        assert!(result.contains("enable: true"));
+    }
+
+    #[test]
+    fn test_set_tun_disable() {
+        let yaml = "tun:\n  enable: true\n  stack: system\n";
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(&path, yaml).unwrap();
+
+        set_tun_config(&path, false).unwrap();
+        let result = std::fs::read_to_string(&path).unwrap();
+        assert!(result.contains("enable: false"));
+    }
+
+    #[test]
+    fn test_set_tun_no_tun_section() {
+        let yaml = "mode: rule\nport: 7890\n";
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(&path, yaml).unwrap();
+
+        let result = set_tun_config(&path, true);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no 'tun' section"));
+    }
+
+    #[test]
+    fn test_set_tun_preserves_other_fields() {
+        let yaml = "tun:\n  enable: false\n  stack: gvisor\n  device: utun\n  auto-route: true\n";
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(&path, yaml).unwrap();
+
+        set_tun_config(&path, true).unwrap();
+        let result = std::fs::read_to_string(&path).unwrap();
+        assert!(result.contains("enable: true"));
+        assert!(result.contains("stack: gvisor"));
+        assert!(result.contains("device: utun"));
+        assert!(result.contains("auto-route: true"));
+    }
 }
