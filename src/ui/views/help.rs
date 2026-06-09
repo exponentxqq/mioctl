@@ -17,7 +17,7 @@ const HELP_TEXT: &str = r#"
  /    Search nodes          Esc    Back / close
  n/N  Next/prev match
  r    Refresh data          Connections
- m    Cycle proxy mode      ───────────
+ m    Open mode selector    ───────────
  p    Toggle proxy          d      Close connection
  q    Quit                  D      Close all
  ?    Toggle help
