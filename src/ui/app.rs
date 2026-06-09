@@ -466,14 +466,15 @@ async fn handle_action(
                         tokio::time::sleep(Duration::from_secs(2)).await;
                         let mut s = shared2.lock().await;
                         s.connect();
-                        drop(s);
-                        refresh_state(&shared2).await;
-                        let mut s = shared2.lock().await;
+                        // Set system proxy BEFORE refresh_state so it's detected
                         if let Some(port) = s.mixed_port {
                             if let Err(e) = crate::os::proxy::set_system_proxy(port) {
                                 s.add_log("error", &format!("System proxy failed: {}", e));
                             }
                         }
+                        drop(s);
+                        refresh_state(&shared2).await;
+                        let mut s = shared2.lock().await;
                         s.add_log("info", "TUN disabled, system proxy enabled");
                         s.ui.loading = None;
                     } else {
