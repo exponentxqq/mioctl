@@ -125,3 +125,30 @@ pub type SharedState = Arc<Mutex<AppState>>;
 pub fn new_shared_state() -> SharedState {
     Arc::new(Mutex::new(AppState::new()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ui_state_defaults() {
+        let ui = UiState::default();
+        assert!(!ui.show_mode_selector);
+        assert_eq!(ui.mode_selector_idx, 0);
+        assert!(!ui.show_help);
+        assert!(!ui.show_settings);
+    }
+
+    #[test]
+    fn test_mode_selector_idx_from_proxy_mode() {
+        assert_eq!(match ProxyMode::Rule { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 0);
+        assert_eq!(match ProxyMode::Global { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 1);
+        assert_eq!(match ProxyMode::Direct { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 2);
+    }
+
+    #[test]
+    fn test_proxy_mode_default_is_rule() {
+        let state = AppState::new();
+        assert_eq!(state.proxy_mode, ProxyMode::Rule);
+    }
+}

@@ -102,4 +102,24 @@ mod tests {
         }];
         assert_eq!(ProxyManager::detect_proxy_mode(&groups), ProxyMode::Rule);
     }
+
+    #[test]
+    fn test_mode_to_index_mapping() {
+        assert_eq!(match ProxyMode::Rule { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 0);
+        assert_eq!(match ProxyMode::Global { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 1);
+        assert_eq!(match ProxyMode::Direct { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 2);
+    }
+
+    #[test]
+    fn test_index_to_mode_roundtrip() {
+        for (idx, expected) in [(0, ProxyMode::Rule), (1, ProxyMode::Global), (2, ProxyMode::Direct)] {
+            let mode = match idx {
+                0 => ProxyMode::Rule,
+                1 => ProxyMode::Global,
+                2 => ProxyMode::Direct,
+                _ => ProxyMode::Rule,
+            };
+            assert_eq!(mode, expected);
+        }
+    }
 }
