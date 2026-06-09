@@ -14,6 +14,7 @@ fn encode_path(s: &str) -> String {
     }).collect()
 }
 
+#[allow(dead_code)]
 impl MihomoClient {
     /// Helper: check response status, extract error body for non-2xx
     async fn check_response(resp: reqwest::Response) -> Result<reqwest::Response, ApiError> {

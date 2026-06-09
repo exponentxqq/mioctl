@@ -109,7 +109,7 @@ pub async fn run_tui() -> Result<(), String> {
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|e| e.to_string())?;
 
-    let mut spark = TrafficSpark::new();
+    let spark = TrafficSpark::new();
     let mut proxy_table = ratatui::widgets::TableState::default();
     let mut conn_table = ratatui::widgets::TableState::default();
 

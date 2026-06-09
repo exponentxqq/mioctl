@@ -30,6 +30,7 @@ pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
 }
 
 /// Write proxy.conf pointing to the given mixed_port.
+#[allow(dead_code)]
 pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     let path = proxy_conf_path();
     if let Some(parent) = path.parent() {

@@ -58,6 +58,7 @@ impl Default for UiState {
     }
 }
 
+#[allow(dead_code)]
 pub struct AppState {
     pub config: MioctlConfig,
     pub client: Option<MihomoClient>,
@@ -80,6 +81,12 @@ pub struct AppState {
     pub connected: bool,
     pub proxy_mode: ProxyMode,
     pub last_updated: String,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppState {

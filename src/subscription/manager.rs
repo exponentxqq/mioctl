@@ -8,7 +8,7 @@ pub struct SubscriptionManager;
 
 impl SubscriptionManager {
     pub async fn update_all(config: &mut MioctlConfig, client: &MihomoClient) -> Result<String, String> {
-        let items: Vec<_> = config.subscriptions.items.iter().cloned().collect();
+        let items: Vec<_> = config.subscriptions.items.to_vec();
         let mut results = Vec::new();
         let now = chrono::Utc::now().to_rfc3339();
         for item in &items {

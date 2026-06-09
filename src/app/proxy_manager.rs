@@ -5,6 +5,7 @@ use crate::app::state::ProxyMode;
 
 pub struct ProxyManager;
 
+#[allow(dead_code)]
 impl ProxyManager {
     pub async fn refresh_all(client: &MihomoClient) -> ApiResult<(ProxiesResponse, Vec<Group>)> {
         let proxies = client.get_proxies().await?;

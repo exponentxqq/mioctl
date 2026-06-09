@@ -13,6 +13,12 @@ pub struct TrafficSpark {
     pub down_data: Vec<u64>,
 }
 
+impl Default for TrafficSpark {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TrafficSpark {
     pub fn new() -> Self {
         Self {
@@ -21,6 +27,7 @@ impl TrafficSpark {
         }
     }
 
+    #[allow(dead_code)]
     pub fn push(&mut self, up: u64, down: u64) {
         self.up_data.push(up);
         self.down_data.push(down);

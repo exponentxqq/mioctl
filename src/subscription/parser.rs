@@ -58,7 +58,7 @@ pub fn parse_yaml(content: &str) -> Result<Vec<ParsedNode>, String> {
             let config: YamlProxies = serde_yaml::from_str(content)
                 .map_err(|e| format!("YAML parse error: {}", e))?;
             return Ok(config.proxies.unwrap_or_default().iter()
-                .filter_map(|p| parse_proxy_value(p))
+                .filter_map(parse_proxy_value)
                 .collect());
         }
     };

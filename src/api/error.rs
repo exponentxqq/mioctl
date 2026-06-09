@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names, dead_code)]
 pub enum ApiError {
     #[error("HTTP request failed: {0}")]
     HttpError(#[from] reqwest::Error),

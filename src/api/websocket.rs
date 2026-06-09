@@ -5,6 +5,7 @@ use crate::api::types::{Traffic, Memory, Connection, LogEntry};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
+#[allow(dead_code)]
 impl MihomoClient {
     fn ws_url(&self, path: &str) -> String {
         self.base_url()

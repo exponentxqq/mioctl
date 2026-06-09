@@ -185,6 +185,7 @@ pub struct ProxyProvider {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ProvidersResponse {
     pub providers: std::collections::HashMap<String, ProxyProvider>,
 }
@@ -192,6 +193,7 @@ pub struct ProvidersResponse {
 // === DNS Query ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct DnsQueryResponse {
     #[serde(default)]
     pub ips: Vec<String>,

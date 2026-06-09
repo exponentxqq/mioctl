@@ -94,6 +94,7 @@ impl Default for MioctlConfig {
     }
 }
 
+#[allow(dead_code)]
 impl MioctlConfig {
     pub fn config_dir() -> PathBuf {
         dirs::config_dir()
