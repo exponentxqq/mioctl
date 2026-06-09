@@ -41,16 +41,16 @@ pub fn render(f: &mut Frame, state: &AppState) {
         lines.push(Line::from(label));
 
         let detail = if is_highlighted {
-            format!("   {}", desc).fg(T.overlay)
+            format!("   {}", desc).fg(T.text)
         } else {
-            format!("   {}", desc).fg(T.subtext)
+            format!("   {}", desc).fg(T.text_secondary)
         };
         lines.push(Line::from(detail));
         lines.push(Line::from(""));
     }
 
     lines.push(Line::from(
-        "Enter 确认 · Esc 取消".fg(T.subtext)
+        "Enter 确认 · Esc 取消".fg(T.text_secondary)
     ));
 
     let text = Paragraph::new(lines).wrap(Wrap { trim: true });

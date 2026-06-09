@@ -2,6 +2,7 @@ pub mod connections;
 pub mod dashboard;
 pub mod help;
 pub mod logs;
+pub mod mode_selector;
 pub mod proxies;
 pub mod rules;
 pub mod settings;

@@ -16,7 +16,7 @@ use crate::os;
 use crate::app::state::{ActiveView::*, AppState, ProxyMode, SharedState};
 use crate::subscription::manager::SubscriptionManager;
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
-use crate::ui::views::{connections, dashboard, help, logs, proxies, rules, settings, sidebar};
+use crate::ui::views::{connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
 const LOG_CAP: usize = 1000;
@@ -137,6 +137,39 @@ pub async fn run_tui() -> Result<(), String> {
                             }
                             _ => {}
                         }
+                    } else if s.ui.show_mode_selector {
+                        // Mode selector: capture navigation keys
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                s.ui.mode_selector_idx = (s.ui.mode_selector_idx + 1).min(2);
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                s.ui.mode_selector_idx = s.ui.mode_selector_idx.saturating_sub(1);
+                            }
+                            KeyCode::Enter => {
+                                let idx = s.ui.mode_selector_idx;
+                                let target = match idx {
+                                    0 => ProxyMode::Rule,
+                                    1 => ProxyMode::Global,
+                                    2 => ProxyMode::Direct,
+                                    _ => ProxyMode::Rule,
+                                };
+                                s.ui.show_mode_selector = false;
+                                let c = s.client.clone();
+                                let s2 = state.clone();
+                                tokio::spawn(async move {
+                                    if let Some(ref client) = c {
+                                        if ProxyManager::set_proxy_mode(client, &target).await.is_ok() {
+                                            refresh_state(&s2).await;
+                                        }
+                                    }
+                                });
+                            }
+                            KeyCode::Esc => {
+                                s.ui.show_mode_selector = false;
+                            }
+                            _ => {}
+                        }
                     } else if let Some(action) = parse_key(key) {
                         if !handle_action(&action, &mut s, state.clone()).await { break; }
                     }
@@ -144,9 +177,10 @@ pub async fn run_tui() -> Result<(), String> {
                 Event::Mouse(mouse) => {
                     if let Some(action) = parse_mouse(mouse) {
                         let mut s = state.lock().await;
-                        if s.ui.show_help || s.ui.show_settings {
+                        if s.ui.show_help || s.ui.show_settings || s.ui.show_mode_selector {
                             s.ui.show_help = false;
                             s.ui.show_settings = false;
+                            s.ui.show_mode_selector = false;
                         } else {
                             handle_action(&action, &mut s, state.clone()).await;
                         }
@@ -207,6 +241,11 @@ fn render_frame(
     if state.ui.show_settings {
         settings::render(f, state);
     }
+
+    // Mode selector popup overlay
+    if state.ui.show_mode_selector {
+        mode_selector::render(f, state);
+    }
 }
 
 async fn handle_action(
@@ -261,15 +300,16 @@ async fn handle_action(
             Connections => s.ui.selected_conn_idx = s.connections.len().saturating_sub(1),
             _ => {}
         },
-        Action::CycleMode => {
-            if let Some(c) = client {
-                let mode = s.proxy_mode.clone();
-                let shared2 = shared.clone();
-                tokio::spawn(async move {
-                    if ProxyManager::cycle_proxy_mode(&c, mode).await.is_ok() {
-                        refresh_state(&shared2).await;
-                    }
-                });
+        Action::OpenModeSelector => {
+            s.ui.show_mode_selector = !s.ui.show_mode_selector;
+            if s.ui.show_mode_selector {
+                s.ui.show_help = false;
+                s.ui.show_settings = false;
+                s.ui.mode_selector_idx = match s.proxy_mode {
+                    ProxyMode::Rule => 0,
+                    ProxyMode::Global => 1,
+                    ProxyMode::Direct => 2,
+                };
             }
         }
         Action::ToggleProxy => {
@@ -361,7 +401,10 @@ async fn handle_action(
         Action::ToggleHelp => s.ui.show_help = !s.ui.show_help,
         Action::ShowSettings => {
             s.ui.show_settings = !s.ui.show_settings;
-            if s.ui.show_settings { s.ui.show_help = false; }
+            if s.ui.show_settings {
+                s.ui.show_help = false;
+                s.ui.show_mode_selector = false;
+            }
         }
         Action::UpdateSubs => {
             let mut cfg = s.config.clone();
@@ -387,7 +430,8 @@ async fn handle_action(
             if s.ui.search_mode {
                 s.ui.search_mode = false;
                 s.ui.search_query.clear();
-            } else if s.ui.show_help { s.ui.show_help = false; }
+            } else if s.ui.show_mode_selector { s.ui.show_mode_selector = false; }
+            else if s.ui.show_help { s.ui.show_help = false; }
             else if s.ui.show_settings { s.ui.show_settings = false; }
         }
         Action::Search => {
