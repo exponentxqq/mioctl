@@ -12,7 +12,7 @@ pub enum Action {
     SearchNext,
     SearchPrev,
     CommandMode,
-    CycleMode,
+    OpenModeSelector,
     SwitchNode,
     TestNodeDelay,
     TestGroupDelay,
@@ -48,7 +48,7 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
         KeyEvent { code: KeyCode::Char('n'), .. } => Some(Action::SearchNext),
         KeyEvent { code: KeyCode::Char('N'), modifiers: KeyModifiers::SHIFT, .. } => Some(Action::SearchPrev),
         KeyEvent { code: KeyCode::Char(':'), .. } => Some(Action::CommandMode),
-        KeyEvent { code: KeyCode::Char('m'), .. } => Some(Action::CycleMode),
+        KeyEvent { code: KeyCode::Char('m'), .. } => Some(Action::OpenModeSelector),
         KeyEvent { code: KeyCode::Enter, .. } => Some(Action::SwitchNode),
         KeyEvent { code: KeyCode::Char('t'), .. } => Some(Action::TestNodeDelay),
         KeyEvent { code: KeyCode::Char('T'), .. } => Some(Action::TestGroupDelay),
@@ -102,7 +102,7 @@ mod tests {
     #[test] fn test_nav() { assert_eq!(parse_key(k('j')), Some(Action::MoveDown)); assert_eq!(parse_key(k('k')), Some(Action::MoveUp)); }
     #[test] fn test_jump() { assert_eq!(parse_key(k('g')), Some(Action::JumpTop)); assert_eq!(parse_key(ks('G')), Some(Action::JumpBottom)); }
     #[test] fn test_search() { assert_eq!(parse_key(k('/')), Some(Action::Search)); assert_eq!(parse_key(ks('N')), Some(Action::SearchPrev)); }
-    #[test] fn test_dashboard() { assert_eq!(parse_key(k('m')), Some(Action::CycleMode)); }
+    #[test] fn test_dashboard() { assert_eq!(parse_key(k('m')), Some(Action::OpenModeSelector)); }
     #[test] fn test_toggle_proxy() { assert_eq!(parse_key(k('p')), Some(Action::ToggleProxy)); }
     #[test] fn test_proxies() { assert_eq!(parse_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(Action::SwitchNode)); assert_eq!(parse_key(k('t')), Some(Action::TestNodeDelay)); }
     #[test] fn test_connections() { assert_eq!(parse_key(k('d')), Some(Action::CloseConnection)); assert_eq!(parse_key(ks('D')), Some(Action::CloseAllConnections)); }
