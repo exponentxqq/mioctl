@@ -417,12 +417,23 @@ async fn handle_action(
                 tokio::spawn(async move {
                     let result = if any_active {
                         if tun_enabled {
-                            c.patch_configs(serde_json::json!({"tun": {"enable": false}})).await
+                            // Get full TUN config to preserve other fields (stack, device, etc.)
+                            let full_config = c.get_configs().await.ok();
+                            let mut tun_cfg = full_config
+                                .and_then(|cfg| cfg.tun)
+                                .unwrap_or_default();
+                            tun_cfg.enable = false;
+                            c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
                         } else {
                             Ok(())
                         }
                     } else {
-                        c.patch_configs(serde_json::json!({"tun": {"enable": true}})).await
+                        let full_config = c.get_configs().await.ok();
+                        let mut tun_cfg = full_config
+                            .and_then(|cfg| cfg.tun)
+                            .unwrap_or_default();
+                        tun_cfg.enable = true;
+                        c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
                     };
                     if any_active {
                         crate::os::proxy::clear_system_proxy();
