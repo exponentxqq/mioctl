@@ -9,6 +9,13 @@ fn proxy_conf_path() -> PathBuf {
         .join("proxy.conf")
 }
 
+fn proxy_env_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("mioctl")
+        .join("proxy.env")
+}
+
 /// Check whether system proxy is enabled: proxy.conf exists and
 /// HTTP_PROXY line points to 127.0.0.1:<mixed_port>.
 pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
@@ -28,16 +35,9 @@ pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
     }
 }
 
-fn zshenv_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".zshenv")
-}
-
-const PROXY_MARKER_BEGIN: &str = "# >>> mioctl proxy >>>";
-const PROXY_MARKER_END: &str = "# <<< mioctl proxy <<<";
-
-/// Write proxy.conf and append proxy env vars to ~/.zshenv.
+/// Write proxy.conf (for detection) and proxy.env (for shell sourcing).
+/// User must add to ~/.zshenv:
+///   [ -f ~/.config/mioctl/proxy.env ] && source ~/.config/mioctl/proxy.env
 #[allow(dead_code)]
 pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     // Write proxy.conf for detection
@@ -52,70 +52,22 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
          NO_PROXY=localhost,127.0.0.1,::1,.local\n",
         mixed_port
     );
-    fs::write(&conf_path, content)?;
+    fs::write(&conf_path, &content)?;
 
-    // Append proxy block to ~/.zshenv
-    let zshenv = zshenv_path();
-    let existing = if zshenv.exists() {
-        fs::read_to_string(&zshenv).unwrap_or_default()
-    } else {
-        String::new()
-    };
-    // Remove old marker block if present
-    let cleaned = remove_marker_block(&existing);
-    let port = mixed_port;
-    let block = format!(
-        "{}\n\
-         export HTTP_PROXY=http://127.0.0.1:{port}\n\
-         export HTTPS_PROXY=http://127.0.0.1:{port}\n\
-         export ALL_PROXY=socks5://127.0.0.1:{port}\n\
-         export NO_PROXY=localhost,127.0.0.1,::1,.local\n\
-         {}\n",
-        PROXY_MARKER_BEGIN, PROXY_MARKER_END,
-    );
-    fs::write(&zshenv, format!("{}{}", cleaned, block))?;
+    // Write proxy.env for shell sourcing
+    let env_path = proxy_env_path();
+    if let Some(parent) = env_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&env_path, &content)?;
 
     Ok(())
 }
 
-/// Remove proxy.conf and the proxy block from ~/.zshenv.
+/// Remove proxy.conf and proxy.env to disable system proxy.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
-
-    let zshenv = zshenv_path();
-    if zshenv.exists() {
-        if let Ok(content) = fs::read_to_string(&zshenv) {
-            let cleaned = remove_marker_block(&content);
-            if cleaned.is_empty() {
-                let _ = fs::remove_file(&zshenv);
-            } else {
-                let _ = fs::write(&zshenv, cleaned);
-            }
-        }
-    }
-}
-
-fn remove_marker_block(s: &str) -> String {
-    let begin = s.find(PROXY_MARKER_BEGIN);
-    let end = s.find(PROXY_MARKER_END);
-    match (begin, end) {
-        (Some(b), Some(e)) => {
-            let before = &s[..b];
-            let after = &s[e + PROXY_MARKER_END.len()..];
-            // Remove trailing newlines from before
-            let before_trimmed = before.trim_end_matches('\n');
-            if before_trimmed.is_empty() && after.trim().is_empty() {
-                String::new()
-            } else if before_trimmed.is_empty() {
-                after.to_string()
-            } else if after.is_empty() {
-                format!("{}\n", before_trimmed)
-            } else {
-                format!("{}\n{}", before_trimmed, after)
-            }
-        }
-        _ => s.to_string(),
-    }
+    let _ = fs::remove_file(proxy_env_path());
 }
 
 #[cfg(test)]
@@ -130,14 +82,11 @@ mod tests {
 
     #[test]
     fn test_detect_wrong_port_returns_false() {
-        // Create a temp file with port 7897, then check for port 9999
         let dir = std::env::temp_dir().join("mioctl-test-detect-wrong");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("proxy.conf");
         fs::write(&path, "HTTP_PROXY=http://127.0.0.1:7897\n").unwrap();
 
-        // detect_system_proxy uses the real ~/.config path, not our temp dir,
-        // so this test verifies the logic works with a matching line.
         let content = "HTTP_PROXY=http://127.0.0.1:7897\n";
         let expected = "http://127.0.0.1:9999";
         let matches = content
@@ -194,29 +143,5 @@ mod tests {
             .lines()
             .any(|line| line.starts_with("HTTP_PROXY=") && line.contains(expected));
         assert!(matches);
-    }
-
-    #[test]
-    fn test_remove_marker_block_cleans_proxy_lines() {
-        let input = "export PATH=/usr/bin\n# >>> mioctl proxy >>>\nexport HTTP_PROXY=http://127.0.0.1:7897\n# <<< mioctl proxy <<<\nexport EDITOR=vim\n";
-        let result = remove_marker_block(input);
-        assert!(!result.contains("mioctl proxy"));
-        assert!(!result.contains("HTTP_PROXY"));
-        assert!(result.contains("export PATH"));
-        assert!(result.contains("export EDITOR"));
-    }
-
-    #[test]
-    fn test_remove_marker_block_empty_when_only_proxy() {
-        let input = "# >>> mioctl proxy >>>\nexport HTTP_PROXY=http://127.0.0.1:7897\n# <<< mioctl proxy <<<\n";
-        let result = remove_marker_block(input);
-        assert!(result.trim().is_empty());
-    }
-
-    #[test]
-    fn test_remove_marker_block_no_marker_unchanged() {
-        let input = "export PATH=/usr/bin\n";
-        let result = remove_marker_block(input);
-        assert_eq!(result, input);
     }
 }
