@@ -31,12 +31,13 @@ pub async fn run_tui() -> Result<(), String> {
             };
             let Some(ref client) = client else { return; };
 
-            // Do ALL network I/O WITHOUT holding the lock
-            let version = client.get_version().await;
-            let proxies = ProxyManager::refresh_all(client).await;
-            let conns = ConnectionManager::list(client).await;
-            let rules = client.get_rules().await;
-            let traffic = client.get_traffic().await;
+            // Do ALL network I/O WITHOUT holding the lock, with short timeouts
+            let t = Duration::from_secs(3);
+            let version = tokio::time::timeout(t, client.get_version()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let proxies = tokio::time::timeout(t, ProxyManager::refresh_all(client)).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let conns = tokio::time::timeout(t, ConnectionManager::list(client)).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let rules = tokio::time::timeout(t, client.get_rules()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+            let traffic = tokio::time::timeout(t, client.get_traffic()).await.unwrap_or(Err(crate::api::error::ApiError::Timeout));
 
             // Lock briefly to update state
             let mut s = s.lock().await;

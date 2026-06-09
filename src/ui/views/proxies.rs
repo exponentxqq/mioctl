@@ -14,6 +14,19 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
         .constraints([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)])
         .split(area);
 
+    if state.groups.is_empty() {
+        let msg = if state.connected {
+            "No proxy groups found.\n\nYour mihomo config may not have any\nproxy-groups configured, or the\nproxies API returned empty data."
+        } else {
+            "Waiting for connection...\n\nMake sure mihomo is running with:\n  external-controller: 127.0.0.1:9090\n\nEdit config in:\n  ~/.config/mioctl/config.toml"
+        };
+        f.render_widget(
+            Paragraph::new(msg).style(Style::default().fg(T.text_secondary)),
+            area,
+        );
+        return;
+    }
+
     let group_items: Vec<ListItem> = state.groups.iter().enumerate().map(|(i, g)| {
         let style = if i == state.ui.selected_group_idx {
             Style::default().fg(T.primary).bg(T.surface)
@@ -28,7 +41,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
     let group = match state.groups.get(state.ui.selected_group_idx) {
         Some(g) => g,
         None => {
-            f.render_widget(Paragraph::new("No groups").style(Style::default().fg(T.text)), chunks[1]);
+            f.render_widget(Paragraph::new("Select a group").style(Style::default().fg(T.text)), chunks[1]);
             return;
         }
     };
