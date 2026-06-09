@@ -49,6 +49,8 @@ pub struct Preferences {
     pub delay_test_timeout_ms: u64,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_app_log_level")]
+    pub app_log_level: String,
 }
 
 fn default_delay_url() -> String {
@@ -60,6 +62,9 @@ fn default_delay_timeout() -> u64 {
 fn default_theme() -> String {
     "catppuccin-mocha".into()
 }
+fn default_app_log_level() -> String {
+    "info".into()
+}
 
 impl Default for Preferences {
     fn default() -> Self {
@@ -67,6 +72,7 @@ impl Default for Preferences {
             delay_test_url: default_delay_url(),
             delay_test_timeout_ms: default_delay_timeout(),
             theme: default_theme(),
+            app_log_level: default_app_log_level(),
         }
     }
 }
@@ -183,5 +189,26 @@ mod tests {
         assert_eq!(deserialized.subscriptions.items.len(), 1);
         assert_eq!(deserialized.subscriptions.items[0].name, "my-sub");
         assert_eq!(deserialized.preferences.delay_test_url, "http://localhost/test");
+    }
+
+    #[test]
+    fn test_default_app_log_level() {
+        assert_eq!(Preferences::default().app_log_level, "info");
+    }
+
+    #[test]
+    fn test_app_log_level_can_change() {
+        let mut prefs = Preferences::default();
+        prefs.app_log_level = "error".into();
+        assert_eq!(prefs.app_log_level, "error");
+    }
+
+    #[test]
+    fn test_app_log_level_roundtrip() {
+        let mut config = MioctlConfig::default();
+        config.preferences.app_log_level = "debug".into();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: MioctlConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.preferences.app_log_level, "debug");
     }
 }
