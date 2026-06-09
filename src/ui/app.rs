@@ -483,7 +483,7 @@ async fn handle_action(
                         s.add_log("info", if tun_enabled { "TUN disabled" } else { "Proxy disabled" });
                         s.ui.loading = None;
                     } else {
-                        // Enable TUN: modify config file, restart mihomo
+                        // Enable TUN + system proxy
                         match set_tun_config(&config_path, true) {
                             Ok(()) => {
                                 let _ = c.restart().await;
@@ -494,9 +494,15 @@ async fn handle_action(
                                 drop(s);
                                 refresh_state(&shared2).await;
                                 let mut s = shared2.lock().await;
+                                // Set system proxy if mixed_port is known
+                                if let Some(port) = s.mixed_port {
+                                    if let Err(e) = crate::os::proxy::set_system_proxy(port) {
+                                        s.add_log("error", &format!("System proxy failed: {}", e));
+                                    }
+                                }
                                 let actual = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
                                 if actual {
-                                    s.add_log("info", "TUN enabled");
+                                    s.add_log("info", "TUN + system proxy enabled");
                                 } else {
                                     s.add_log("error", "TUN toggle: config updated but TUN did not start — check stack/permissions in mihomo config");
                                 }
