@@ -29,7 +29,8 @@ pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
     }
 }
 
-/// Write proxy.conf pointing to the given mixed_port.
+/// Write proxy.conf and set env vars via systemd user session.
+/// systemctl --user set-environment pushes env vars to new user processes.
 #[allow(dead_code)]
 pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     let path = proxy_conf_path();
@@ -48,23 +49,23 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     let _ = std::process::Command::new("systemctl")
         .args([
             "--user",
-            "import-environment",
-            "HTTP_PROXY",
-            "HTTPS_PROXY",
-            "ALL_PROXY",
-            "NO_PROXY",
+            "set-environment",
+            &format!("HTTP_PROXY=http://127.0.0.1:{}", mixed_port),
+            &format!("HTTPS_PROXY=http://127.0.0.1:{}", mixed_port),
+            &format!("ALL_PROXY=socks5://127.0.0.1:{}", mixed_port),
+            "NO_PROXY=localhost,127.0.0.1,::1,.local",
         ])
         .output();
     Ok(())
 }
 
-/// Remove proxy.conf to disable system proxy.
+/// Remove proxy.conf and unset env vars via systemd user session.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = std::process::Command::new("systemctl")
         .args([
             "--user",
-            "import-environment",
+            "unset-environment",
             "HTTP_PROXY",
             "HTTPS_PROXY",
             "ALL_PROXY",
