@@ -37,6 +37,17 @@ esac
 mioctl_suffix="${arch_label}-${os_label}"
 echo "detected: $OS / $ARCH"
 
+# ---- mioctl install strategy ----
+# Prebuilt binaries are available for all targets except aarch64-linux
+# (OpenSSL native-tls cross-compilation is complex; use cargo install as fallback)
+USE_CARGO_INSTALL=false
+if [ "$OS" = "Linux" ] && [ "$ARCH" = "aarch64" ]; then
+  USE_CARGO_INSTALL=true
+fi
+if [ "$mioctl_os" = "linux" ] && [ "$ARCH" = "arm64" ]; then
+  USE_CARGO_INSTALL=true
+fi
+
 # ---- mihomo platform mapping (different naming convention) ----
 case "$OS" in
   Linux)  mihomo_os="linux" ;;
@@ -142,50 +153,68 @@ echo ""
 echo "${BOLD}Installing clipboard dependencies...${NC}"
 install_clipboard_deps
 
-# ---- download mioctl ----
+# ---- install mioctl ----
 echo ""
-echo "${BOLD}Downloading mioctl...${NC}"
+echo "${BOLD}Installing mioctl...${NC}"
 
 TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT
 
-mioctl_archive="mioctl-${MIOCTL_VERSION}-${mioctl_suffix}.tar.gz"
-mioctl_url="https://github.com/exponentxqq/mioctl/releases/download/${MIOCTL_VERSION}/${mioctl_archive}"
-checksum_url="${mioctl_url}.sha256"
-
-curl -fsSL -o "$TMPDIR/$mioctl_archive" "$mioctl_url"
-curl -fsSL -o "$TMPDIR/$mioctl_archive.sha256" "$checksum_url" || true
-
-# verify (best effort)
-if command -v sha256sum >/dev/null 2>&1; then
-  cd "$TMPDIR"
-  if sha256sum --check "$mioctl_archive.sha256" --status 2>/dev/null; then
-    ok "mioctl checksum OK"
-  else
-    warn "mioctl checksum verification failed, continuing anyway"
+if [ "$USE_CARGO_INSTALL" = true ]; then
+  # aarch64-linux: no prebuilt binary yet (native-tls + OpenSSL cross-compilation
+  # is not set up in CI). Fall back to cargo install from source.
+  echo "no prebuilt binary for aarch64-linux, installing from source via cargo..."
+  if ! command -v cargo >/dev/null 2>&1; then
+    if command -v rustup >/dev/null 2>&1; then
+      echo "installing Rust toolchain..."
+      rustup toolchain install stable
+    else
+      echo "installing Rust via rustup..."
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      . "$HOME/.cargo/env"
+    fi
   fi
-  cd - >/dev/null
+  cargo install mioctl --version "$MIOCTL_VERSION"
+  ok "mioctl $MIOCTL_VERSION installed via cargo"
 else
-  warn "sha256sum not found, skipping checksum verification"
-fi
+  mioctl_archive="mioctl-${MIOCTL_VERSION}-${mioctl_suffix}.tar.gz"
+  mioctl_url="https://github.com/exponentxqq/mioctl/releases/download/${MIOCTL_VERSION}/${mioctl_archive}"
+  checksum_url="${mioctl_url}.sha256"
 
-echo "extracting..."
-tar xzf "$TMPDIR/$mioctl_archive" -C "$TMPDIR"
+  curl -fsSL -o "$TMPDIR/$mioctl_archive" "$mioctl_url"
+  curl -fsSL -o "$TMPDIR/$mioctl_archive.sha256" "$checksum_url" || true
 
-if [ ! -d "$INSTALL_DIR" ]; then
-  echo "creating $INSTALL_DIR..."
-  sudo mkdir -p "$INSTALL_DIR"
-fi
+  # verify (best effort)
+  if command -v sha256sum >/dev/null 2>&1; then
+    cd "$TMPDIR"
+    if sha256sum --check "$mioctl_archive.sha256" --status 2>/dev/null; then
+      ok "checksum OK"
+    else
+      warn "checksum verification failed, continuing anyway"
+    fi
+    cd - >/dev/null
+  else
+    warn "sha256sum not found, skipping checksum verification"
+  fi
 
-if [ -w "$INSTALL_DIR" ]; then
-  cp "$TMPDIR/mioctl${exe}" "$INSTALL_DIR/"
-else
-  echo "installing to $INSTALL_DIR requires sudo..."
-  sudo cp "$TMPDIR/mioctl${exe}" "$INSTALL_DIR/"
+  echo "extracting..."
+  tar xzf "$TMPDIR/$mioctl_archive" -C "$TMPDIR"
+
+  if [ ! -d "$INSTALL_DIR" ]; then
+    echo "creating $INSTALL_DIR..."
+    sudo mkdir -p "$INSTALL_DIR"
+  fi
+
+  if [ -w "$INSTALL_DIR" ]; then
+    cp "$TMPDIR/mioctl${exe}" "$INSTALL_DIR/"
+  else
+    echo "installing to $INSTALL_DIR requires sudo..."
+    sudo cp "$TMPDIR/mioctl${exe}" "$INSTALL_DIR/"
+  fi
+  chmod +x "$INSTALL_DIR/mioctl${exe}"
+  ok "mioctl $MIOCTL_VERSION → $INSTALL_DIR/mioctl${exe}"
 fi
-chmod +x "$INSTALL_DIR/mioctl${exe}"
-ok "mioctl $MIOCTL_VERSION → $INSTALL_DIR/mioctl${exe}"
 
 # ---- download mihomo ----
 echo ""
