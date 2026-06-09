@@ -27,7 +27,6 @@ base64 = "0.22"
 url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
-arboard = "3"
 
 [dev-dependencies]
 wiremock = "0.6"

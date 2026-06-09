@@ -34,10 +34,28 @@ fn collect_log_selection(state: &AppState) -> String {
         .join("\n")
 }
 
-/// Copy text to system clipboard. Returns true on success.
+/// Copy text to system clipboard via xclip (X11) or wl-copy (Wayland).
 fn copy_to_clipboard(text: &str) -> bool {
-    match arboard::Clipboard::new() {
-        Ok(mut clipboard) => clipboard.set_text(text).is_ok(),
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let (cmd, args) = if std::env::var("WAYLAND_DISPLAY").is_ok() {
+        ("wl-copy", vec![])
+    } else {
+        ("xclip", vec!["-selection", "clipboard"])
+    };
+
+    match Command::new(cmd)
+        .args(&args)
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            child.wait().is_ok()
+        }
         Err(_) => false,
     }
 }
@@ -240,10 +258,11 @@ pub async fn run_tui() -> Result<(), String> {
                             }
                             KeyCode::Char('y') => {
                                 let text = collect_log_selection(&s);
+                                s.add_log("info", &format!("Visual copy: {} chars", text.len()));
                                 let copied = copy_to_clipboard(&text);
                                 s.ui.log_visual = false;
                                 if !copied {
-                                    s.add_log("error", "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)");
+                                    s.add_log("error", "xclip failed — is xclip installed? (pacman -S xclip)");
                                 }
                                 drop(s);
                                 continue;
