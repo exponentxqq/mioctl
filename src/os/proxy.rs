@@ -16,6 +16,12 @@ fn proxy_env_path() -> PathBuf {
         .join("proxy.env")
 }
 
+fn pam_env_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".pam_environment")
+}
+
 /// Check whether system proxy is enabled: proxy.conf exists and
 /// HTTP_PROXY line points to 127.0.0.1:<mixed_port>.
 pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
@@ -75,6 +81,20 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     }
     fs::write(&env_path, &env_content)?;
 
+    // Write .pam_environment — same mechanism as /etc/environment,
+    // covers ALL processes including browsers launched from DE.
+    // Format: KEY DEFAULT=value (DEFAULT = set if not already defined)
+    let pam_content = format!(
+        "HTTP_PROXY DEFAULT=http://127.0.0.1:{0}\n\
+         http_proxy DEFAULT=http://127.0.0.1:{0}\n\
+         HTTPS_PROXY DEFAULT=http://127.0.0.1:{0}\n\
+         https_proxy DEFAULT=http://127.0.0.1:{0}\n\
+         NO_PROXY DEFAULT=localhost,127.0.0.1,::1,.local\n\
+         no_proxy DEFAULT=localhost,127.0.0.1,::1,.local\n",
+        mixed_port
+    );
+    fs::write(pam_env_path(), pam_content)?;
+
     // Set via systemd — covers all shells, terminals, and GUI apps
     let _ = std::process::Command::new("systemctl")
         .args([
@@ -94,6 +114,7 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
+    let _ = fs::remove_file(pam_env_path());
     let _ = std::process::Command::new("systemctl")
         .args([
             "--user",
