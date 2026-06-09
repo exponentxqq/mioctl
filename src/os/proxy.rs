@@ -9,6 +9,7 @@ fn proxy_conf_path() -> PathBuf {
         .join("proxy.conf")
 }
 
+#[allow(dead_code)]
 fn proxy_env_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -56,12 +57,12 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     );
     fs::write(&conf_path, &content)?;
 
-    // Write proxy.env for shell sourcing
-    let env_path = proxy_env_path();
-    if let Some(parent) = env_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&env_path, &content)?;
+    // Write proxy.env for shell sourcing (disabled — testing systemd-only)
+    // let env_path = proxy_env_path();
+    // if let Some(parent) = env_path.parent() {
+    //     fs::create_dir_all(parent)?;
+    // }
+    // fs::write(&env_path, &content)?;
 
     // Set via systemd — covers all shells, terminals, and GUI apps
     let _ = std::process::Command::new("systemctl")
@@ -81,7 +82,7 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
 /// Remove proxy.conf, proxy.env, and unset via systemd.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
-    let _ = fs::remove_file(proxy_env_path());
+    // let _ = fs::remove_file(proxy_env_path());  // disabled — testing systemd-only
     let _ = std::process::Command::new("systemctl")
         .args([
             "--user",
