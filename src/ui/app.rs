@@ -98,11 +98,18 @@ pub async fn run_tui() -> Result<(), String> {
         if last_poll.elapsed() >= poll_interval {
             let client = { state.lock().await.client.clone() };
             if let Some(ref client) = client {
-                // Do network I/O WITHOUT holding the lock
-                let proxies = ProxyManager::refresh_all(client).await;
-                let conns = ConnectionManager::list(client).await;
-                let rules = client.get_rules().await;
-                let traffic = client.get_traffic().await;
+                // Fire all requests concurrently with short timeout
+                let t = Duration::from_secs(3);
+                let (proxies, conns, rules, traffic) = tokio::join!(
+                    tokio::time::timeout(t, ProxyManager::refresh_all(client)),
+                    tokio::time::timeout(t, ConnectionManager::list(client)),
+                    tokio::time::timeout(t, client.get_rules()),
+                    tokio::time::timeout(t, client.get_traffic()),
+                );
+                let proxies = proxies.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+                let conns = conns.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+                let rules = rules.unwrap_or(Err(crate::api::error::ApiError::Timeout));
+                let traffic = traffic.unwrap_or(Err(crate::api::error::ApiError::Timeout));
 
                 // Lock briefly to update state
                 let mut s = state.lock().await;
