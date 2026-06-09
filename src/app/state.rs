@@ -122,6 +122,7 @@ pub struct AppState {
     pub connected: bool,
     pub proxy_mode: ProxyMode,
     pub last_updated: String,
+    pub proxy_guard: Option<tokio::task::AbortHandle>,
 }
 
 impl Default for AppState {
@@ -157,6 +158,7 @@ impl AppState {
             connected: false,
             proxy_mode: ProxyMode::Rule,
             last_updated: String::new(),
+            proxy_guard: None,
         }
     }
 

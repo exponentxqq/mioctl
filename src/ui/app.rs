@@ -34,6 +34,54 @@ fn collect_log_selection(state: &AppState) -> String {
         .join("\n")
 }
 
+/// Start a background task that re-applies system proxy every 30s.
+/// Prevents other apps/system-updates from clearing the proxy settings.
+fn start_proxy_guard(shared: SharedState, port: u16) -> tokio::task::AbortHandle {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let enabled = {
+                let s = shared.lock().await;
+                s.system_proxy_enabled
+            };
+            if !enabled {
+                break;
+            }
+            // Re-apply gsettings (browser)
+            let _ = std::process::Command::new("gsettings")
+                .args(["set", "org.gnome.system.proxy", "mode", "manual"])
+                .output();
+            let _ = std::process::Command::new("gsettings")
+                .args(["set", "org.gnome.system.proxy.http", "host", "127.0.0.1"])
+                .output();
+            let _ = std::process::Command::new("gsettings")
+                .args(["set", "org.gnome.system.proxy.https", "host", "127.0.0.1"])
+                .output();
+            let _ = std::process::Command::new("gsettings")
+                .args(["set", "org.gnome.system.proxy.http", "port", &port.to_string()])
+                .output();
+            let _ = std::process::Command::new("gsettings")
+                .args(["set", "org.gnome.system.proxy.https", "port", &port.to_string()])
+                .output();
+            // Re-write proxy.env in case it was deleted
+            let env_content = format!(
+                "export HTTP_PROXY=http://127.0.0.1:{port}\n\
+                 export http_proxy=http://127.0.0.1:{port}\n\
+                 export HTTPS_PROXY=http://127.0.0.1:{port}\n\
+                 export https_proxy=http://127.0.0.1:{port}\n\
+                 export NO_PROXY=localhost,127.0.0.1,::1,.local\n\
+                 export no_proxy=localhost,127.0.0.1,::1,.local\n",
+            );
+            let env_path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("mioctl")
+                .join("proxy.env");
+            let _ = std::fs::write(&env_path, &env_content);
+        }
+    })
+    .abort_handle()
+}
+
 /// Copy text to system clipboard via xclip (X11) or wl-copy (Wayland).
 fn copy_to_clipboard(text: &str) -> bool {
     use std::io::Write;
@@ -475,11 +523,25 @@ async fn handle_action(
                         drop(s);
                         refresh_state(&shared2).await;
                         let mut s = shared2.lock().await;
+                        // Start proxy guard
+                        if let Some(port) = s.mixed_port {
+                            if let Some(old) = s.proxy_guard.take() {
+                                old.abort();
+                            }
+                            s.proxy_guard = Some(start_proxy_guard(shared2.clone(), port));
+                        }
                         s.add_log("info", "TUN disabled, system proxy enabled");
                         s.ui.loading = None;
                     } else {
                         // TUN OFF → enable TUN, disable system proxy
                         crate::os::proxy::clear_system_proxy();
+                        // Stop proxy guard if running
+                        {
+                            let mut s = shared2.lock().await;
+                            if let Some(g) = s.proxy_guard.take() {
+                                g.abort();
+                            }
+                        }
                         match set_tun_config(&config_path, true) {
                             Ok(()) => {
                                 let _ = c.restart().await;
