@@ -72,3 +72,31 @@ jobs:
           path: |
             target/${{ matrix.target }}/release/mioctl-*.tar.gz
             target/${{ matrix.target }}/release/mioctl-*.tar.gz.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifact files
+        run: |
+          mkdir dist
+          find artifacts -type f -name '*.tar.gz' -exec cp {} dist/ \;
+          find artifacts -type f -name '*.sha256' -exec cp {} dist/ \;
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
