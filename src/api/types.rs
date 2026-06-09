@@ -395,4 +395,66 @@ mod tests {
         assert_eq!(global.now.as_deref(), Some("DIRECT"));
         assert_eq!(global.all.len(), 2);
     }
+
+    #[test]
+    fn test_tun_config_serialize_enable() {
+        let tun = TunConfig {
+            enable: true,
+            stack: Some("system".into()),
+            device: None,
+            auto_route: None,
+        };
+        let payload = serde_json::json!({"tun": tun});
+        let json_str = serde_json::to_string(&payload).unwrap();
+        assert!(json_str.contains(r#""enable":true"#));
+        assert!(json_str.contains(r#""stack":"system""#));
+    }
+
+    #[test]
+    fn test_tun_config_serialize_disable() {
+        let tun = TunConfig {
+            enable: false,
+            stack: None,
+            device: None,
+            auto_route: None,
+        };
+        let payload = serde_json::json!({"tun": tun});
+        let json_str = serde_json::to_string(&payload).unwrap();
+        assert!(json_str.contains(r#""enable":false"#));
+    }
+
+    #[test]
+    fn test_tun_toggle_has_stack_when_enabling() {
+        // Baseline: default TUN has no stack
+        let mut tun = TunConfig::default();
+        assert!(!tun.enable);
+        assert!(tun.stack.is_none());
+        // Simulate ToggleProxy enable path: set enable + fill stack default
+        tun.enable = true;
+        if tun.stack.is_none() {
+            tun.stack = Some("system".into());
+        }
+        assert_eq!(tun.stack.as_deref(), Some("system"));
+        // Serialize — must produce valid mihomo TUN payload with both enable and stack
+        let payload = serde_json::json!({"tun": tun});
+        let json_str = serde_json::to_string(&payload).unwrap();
+        assert!(json_str.contains(r#""stack":"system""#));
+        assert!(json_str.contains(r#""enable":true"#));
+    }
+
+    #[test]
+    fn test_tun_serialize_preserves_all_fields() {
+        let tun = TunConfig {
+            enable: true,
+            stack: Some("gvisor".into()),
+            device: Some("utun".into()),
+            auto_route: Some(true),
+        };
+        let payload = serde_json::json!({"tun": tun});
+        let json_str = serde_json::to_string(&payload).unwrap();
+        assert!(json_str.contains(r#""enable":true"#));
+        assert!(json_str.contains(r#""stack":"gvisor""#));
+        assert!(json_str.contains(r#""device":"utun""#));
+        assert!(json_str.contains(r#""auto-route":true"#));
+    }
 }

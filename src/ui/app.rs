@@ -413,26 +413,24 @@ async fn handle_action(
                 s.ui.loading = Some(LoadingKind::ToggleProxy);
                 let tun_enabled = s.tun.as_ref().map(|t| t.enable).unwrap_or(false);
                 let any_active = tun_enabled || s.system_proxy_enabled;
+                let current_tun = s.tun.clone(); // capture full TUN config from state
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     let result = if any_active {
                         if tun_enabled {
-                            // Get full TUN config to preserve other fields (stack, device, etc.)
-                            let full_config = c.get_configs().await.ok();
-                            let mut tun_cfg = full_config
-                                .and_then(|cfg| cfg.tun)
-                                .unwrap_or_default();
+                            let mut tun_cfg = current_tun.unwrap_or_default();
                             tun_cfg.enable = false;
                             c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
                         } else {
                             Ok(())
                         }
                     } else {
-                        let full_config = c.get_configs().await.ok();
-                        let mut tun_cfg = full_config
-                            .and_then(|cfg| cfg.tun)
-                            .unwrap_or_default();
+                        let mut tun_cfg = current_tun.unwrap_or_default();
                         tun_cfg.enable = true;
+                        // Ensure required fields have defaults
+                        if tun_cfg.stack.is_none() {
+                            tun_cfg.stack = Some("system".into());
+                        }
                         c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
                     };
                     if any_active {
