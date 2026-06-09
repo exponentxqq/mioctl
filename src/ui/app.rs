@@ -13,13 +13,11 @@ use ratatui::{
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
 use crate::os;
-use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState};
+use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState, LOG_CAP};
 use crate::subscription::manager::SubscriptionManager;
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
 use crate::ui::views::{connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
-
-const LOG_CAP: usize = 1000;
 
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();

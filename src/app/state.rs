@@ -5,6 +5,9 @@ use crate::api::types::*;
 use crate::config::mioctl_config::MioctlConfig;
 use chrono::Local;
 
+/// Maximum number of log entries to retain.
+pub const LOG_CAP: usize = 1000;
+
 /// Identifies which async operation is currently in progress.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoadingKind {
@@ -65,6 +68,10 @@ pub struct UiState {
     pub mode_selector_idx: usize,
     pub loading: Option<LoadingKind>,
     pub spinner_frame: u8,
+    pub log_cursor: usize,
+    pub log_visual: bool,
+    pub log_select_start: usize,
+    pub log_select_end: usize,
 }
 
 impl Default for UiState {
@@ -84,6 +91,10 @@ impl Default for UiState {
             mode_selector_idx: 0,
             loading: None,
             spinner_frame: 0,
+            log_cursor: 0,
+            log_visual: false,
+            log_select_start: 0,
+            log_select_end: 0,
         }
     }
 }
@@ -158,6 +169,23 @@ impl AppState {
     pub fn update_time(&mut self) {
         self.last_updated = Local::now().format("%H:%M:%S").to_string();
     }
+
+    /// Push an app-level log entry with timestamp, respecting configured log level.
+    pub fn add_log(&mut self, level: &str, msg: &str) {
+        let cfg_level = self.config.preferences.app_log_level.as_str();
+        if cfg_level == "off" { return; }
+        if cfg_level == "info" && level == "debug" { return; }
+        if cfg_level == "error" && level != "error" { return; }
+
+        let entry = LogEntry {
+            level: level.to_string(),
+            payload: format!("[{}] {}", Local::now().format("%H:%M:%S"), msg),
+        };
+        self.logs.push(entry);
+        while self.logs.len() > LOG_CAP {
+            self.logs.remove(0);
+        }
+    }
 }
 
 pub type SharedState = Arc<Mutex<AppState>>;
@@ -228,5 +256,81 @@ mod tests {
         assert_eq!(ui.loading, Some(LoadingKind::SwitchMode));
         ui.loading = None;
         assert!(ui.loading.is_none());
+    }
+
+    #[test]
+    fn test_add_log_info() {
+        let mut state = AppState::new();
+        state.add_log("info", "test message");
+        assert_eq!(state.logs.len(), 1);
+        assert_eq!(state.logs[0].level, "info");
+        assert!(state.logs[0].payload.contains("test message"));
+        assert!(state.logs[0].payload.contains('['));
+        assert!(state.logs[0].payload.contains(']'));
+    }
+
+    #[test]
+    fn test_add_log_error() {
+        let mut state = AppState::new();
+        state.add_log("error", "failure");
+        assert_eq!(state.logs.len(), 1);
+        assert_eq!(state.logs[0].level, "error");
+    }
+
+    #[test]
+    fn test_add_log_cap() {
+        let mut state = AppState::new();
+        for i in 0..(LOG_CAP + 10) {
+            state.add_log("info", &format!("msg {}", i));
+        }
+        assert_eq!(state.logs.len(), LOG_CAP);
+    }
+
+    #[test]
+    fn test_add_log_off() {
+        let mut state = AppState::new();
+        state.config.preferences.app_log_level = "off".into();
+        state.add_log("info", "should not appear");
+        assert_eq!(state.logs.len(), 0);
+    }
+
+    #[test]
+    fn test_add_log_error_only_filters_info() {
+        let mut state = AppState::new();
+        state.config.preferences.app_log_level = "error".into();
+        state.add_log("info", "info msg");
+        state.add_log("error", "err msg");
+        assert_eq!(state.logs.len(), 1);
+        assert_eq!(state.logs[0].level, "error");
+    }
+
+    #[test]
+    fn test_add_log_debug_passes_all() {
+        let mut state = AppState::new();
+        state.config.preferences.app_log_level = "debug".into();
+        state.add_log("debug", "debug msg");
+        state.add_log("info", "info msg");
+        state.add_log("error", "err msg");
+        assert_eq!(state.logs.len(), 3);
+    }
+
+    #[test]
+    fn test_log_ui_defaults() {
+        let ui = UiState::default();
+        assert_eq!(ui.log_cursor, 0);
+        assert!(!ui.log_visual);
+        assert_eq!(ui.log_select_start, 0);
+        assert_eq!(ui.log_select_end, 0);
+    }
+
+    #[test]
+    fn test_log_visual_selection_range() {
+        let mut ui = UiState::default();
+        ui.log_cursor = 5;
+        ui.log_visual = true;
+        ui.log_select_start = 5;
+        ui.log_select_end = 10;
+        assert!(ui.log_select_start <= ui.log_select_end);
+        assert_eq!(ui.log_select_end, 10);
     }
 }
