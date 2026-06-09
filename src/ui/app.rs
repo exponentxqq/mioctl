@@ -416,28 +416,61 @@ async fn handle_action(
                 let current_tun = s.tun.clone(); // capture full TUN config from state
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
-                    let result = if any_active {
+                    let action_str = if any_active && tun_enabled {
+                        "disable TUN"
+                    } else if any_active {
+                        "disable proxy"
+                    } else {
+                        "enable TUN"
+                    };
+
+                    let payload = if any_active {
                         if tun_enabled {
                             let mut tun_cfg = current_tun.unwrap_or_default();
                             tun_cfg.enable = false;
-                            c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
+                            let p = serde_json::json!({"tun": tun_cfg});
+                            let _ = &p; // move into closure
+                            p
                         } else {
-                            Ok(())
+                            serde_json::json!({})
                         }
                     } else {
                         let mut tun_cfg = current_tun.unwrap_or_default();
                         tun_cfg.enable = true;
-                        // Ensure required fields have defaults
                         if tun_cfg.stack.is_none() {
                             tun_cfg.stack = Some("system".into());
                         }
-                        c.patch_configs(serde_json::json!({"tun": tun_cfg})).await
+                        serde_json::json!({"tun": tun_cfg})
                     };
+
+                    let payload_str = serde_json::to_string(&payload).unwrap_or_default();
+
+                    let result = if payload.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                        Ok(())
+                    } else {
+                        c.patch_configs(payload).await
+                    };
+
                     if any_active {
                         crate::os::proxy::clear_system_proxy();
                     }
+
                     refresh_state(&shared2).await;
+
+                    // Diagnostic: log what refresh_state read back
+                    let tun_after = {
+                        let s = shared2.lock().await;
+                        s.tun.clone()
+                    };
+
                     let mut s = shared2.lock().await;
+                    s.add_log("info", &format!(
+                        "[DIAG] p: {} → payload={} → result={:?} → tun_after={:?}",
+                        action_str,
+                        payload_str,
+                        result.as_ref().map(|_| "ok").unwrap_or("err"),
+                        tun_after.as_ref().map(|t| (t.enable, t.stack.as_deref(), t.device.as_deref())),
+                    ));
                     match result {
                         Ok(()) => {
                             let msg = if any_active && tun_enabled { "TUN disabled" }
