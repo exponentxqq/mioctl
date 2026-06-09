@@ -20,7 +20,7 @@ use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 pub async fn run_tui() -> Result<(), String> {
     let state: SharedState = crate::app::state::new_shared_state();
 
-    // Spawn background connection — don't block TUI startup
+    // Background: connect + load initial data (lock briefly, await unlocked)
     {
         let s = state.clone();
         tokio::spawn(async move {
@@ -29,28 +29,30 @@ pub async fn run_tui() -> Result<(), String> {
                 s.connect();
                 s.client.clone()
             };
-            if let Some(ref client) = client {
-                let mut s = s.lock().await;
-                if let Ok(v) = client.get_version().await {
-                    s.version = v.version;
-                    s.connected = true;
-                }
-                if let Ok((proxies, groups)) = ProxyManager::refresh_all(client).await {
-                    s.proxies = proxies;
-                    s.groups = groups;
-                    s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
-                }
-                if let Ok(conns) = ConnectionManager::list(client).await {
-                    s.connections = conns;
-                }
-                if let Ok(r) = client.get_rules().await {
-                    s.rules = r;
-                }
-                if let Ok(traffic) = client.get_traffic().await {
-                    s.traffic = traffic;
-                }
-                s.update_time();
+            let Some(ref client) = client else { return; };
+
+            // Do ALL network I/O WITHOUT holding the lock
+            let version = client.get_version().await;
+            let proxies = ProxyManager::refresh_all(client).await;
+            let conns = ConnectionManager::list(client).await;
+            let rules = client.get_rules().await;
+            let traffic = client.get_traffic().await;
+
+            // Lock briefly to update state
+            let mut s = s.lock().await;
+            if let Ok(v) = version {
+                s.version = v.version;
+                s.connected = true;
             }
+            if let Ok((p, g)) = proxies {
+                s.proxies = p;
+                s.groups = g;
+                s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
+            }
+            if let Ok(c) = conns { s.connections = c; }
+            if let Ok(r) = rules { s.rules = r; }
+            if let Ok(t) = traffic { s.traffic = t; }
+            s.update_time();
         });
     }
 
@@ -86,21 +88,22 @@ pub async fn run_tui() -> Result<(), String> {
         if last_poll.elapsed() >= poll_interval {
             let client = { state.lock().await.client.clone() };
             if let Some(ref client) = client {
+                // Do network I/O WITHOUT holding the lock
+                let proxies = ProxyManager::refresh_all(client).await;
+                let conns = ConnectionManager::list(client).await;
+                let rules = client.get_rules().await;
+                let traffic = client.get_traffic().await;
+
+                // Lock briefly to update state
                 let mut s = state.lock().await;
-                if let Ok((proxies, groups)) = ProxyManager::refresh_all(client).await {
-                    s.proxies = proxies;
-                    s.groups = groups;
+                if let Ok((p, g)) = proxies {
+                    s.proxies = p;
+                    s.groups = g;
                     s.proxy_mode = ProxyManager::detect_proxy_mode(&s.groups);
                 }
-                if let Ok(conns) = ConnectionManager::list(client).await {
-                    s.connections = conns;
-                }
-                if let Ok(r) = client.get_rules().await {
-                    s.rules = r;
-                }
-                if let Ok(traffic) = client.get_traffic().await {
-                    s.traffic = traffic;
-                }
+                if let Ok(c) = conns { s.connections = c; }
+                if let Ok(r) = rules { s.rules = r; }
+                if let Ok(t) = traffic { s.traffic = t; }
                 spark.push(s.traffic.up, s.traffic.down);
                 s.update_time();
             }
