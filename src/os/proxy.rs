@@ -47,21 +47,29 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     if let Some(parent) = conf_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let content = format!(
+    // Write proxy.conf for detection (no export prefix)
+    let conf_content = format!(
+        "HTTP_PROXY=http://127.0.0.1:{0}\n\
+         HTTPS_PROXY=http://127.0.0.1:{0}\n\
+         ALL_PROXY=socks5://127.0.0.1:{0}\n\
+         NO_PROXY=localhost,127.0.0.1,::1,.local\n",
+        mixed_port
+    );
+    fs::write(&conf_path, &conf_content)?;
+
+    // Write proxy.env for shell sourcing (with export)
+    let env_content = format!(
         "export HTTP_PROXY=http://127.0.0.1:{0}\n\
          export HTTPS_PROXY=http://127.0.0.1:{0}\n\
          export ALL_PROXY=socks5://127.0.0.1:{0}\n\
          export NO_PROXY=localhost,127.0.0.1,::1,.local\n",
         mixed_port
     );
-    fs::write(&conf_path, &content)?;
-
-    // Write proxy.env for shell sourcing
     let env_path = proxy_env_path();
     if let Some(parent) = env_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&env_path, &content)?;
+    fs::write(&env_path, &env_content)?;
 
     // Set via systemd — covers all shells, terminals, and GUI apps
     let _ = std::process::Command::new("systemctl")
