@@ -12,9 +12,10 @@ use ratatui::{
 
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
+use crate::subscription::manager::SubscriptionManager;
 use crate::app::state::{ActiveView::*, AppState, SharedState};
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
-use crate::ui::views::{connections, dashboard, help, logs, proxies, rules, sidebar};
+use crate::ui::views::{connections, dashboard, help, logs, proxies, rules, settings, sidebar};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
 pub async fn run_tui() -> Result<(), String> {
@@ -84,9 +85,9 @@ pub async fn run_tui() -> Result<(), String> {
                 Event::Mouse(mouse) => {
                     if let Some(action) = parse_mouse(mouse) {
                         let mut s = state.lock().await;
-                        if s.ui.show_help {
-                            // Close help on any click outside
+                        if s.ui.show_help || s.ui.show_settings {
                             s.ui.show_help = false;
+                            s.ui.show_settings = false;
                         } else {
                             handle_action(&action, &mut s).await;
                         }
@@ -172,6 +173,11 @@ fn render_frame(
     // Help popup overlay
     if state.ui.show_help {
         help::render(f);
+    }
+
+    // Settings popup overlay
+    if state.ui.show_settings {
+        settings::render(f, state);
     }
 }
 
@@ -272,11 +278,26 @@ async fn handle_action(action: &Action, s: &mut AppState) -> bool {
         }
         Action::TogglePause => s.ui.log_paused = !s.ui.log_paused,
         Action::ToggleHelp => s.ui.show_help = !s.ui.show_help,
+        Action::ShowSettings => {
+            s.ui.show_settings = !s.ui.show_settings;
+            if s.ui.show_settings { s.ui.show_help = false; }
+        }
+        Action::UpdateSubs => {
+            let mut cfg = s.config.clone();
+            let c = s.client.clone();
+            tokio::spawn(async move {
+                if let Some(ref client) = c {
+                    match SubscriptionManager::update_all(&mut cfg, client).await {
+                        Ok(r) => { /* status will be updated on next poll */ }
+                        Err(_) => {}
+                    }
+                }
+            });
+            s.ui.update_status = Some("Updating subscriptions...".into());
+        }
         Action::Back => {
-            if s.ui.show_help {
-                s.ui.show_help = false;
-            }
-            // Back is also used in proxies view context (Esc)
+            if s.ui.show_help { s.ui.show_help = false; }
+            else if s.ui.show_settings { s.ui.show_settings = false; }
         }
         Action::CycleLogLevel => {
             s.ui.log_level_filter = match s.ui.log_level_filter.as_deref() {

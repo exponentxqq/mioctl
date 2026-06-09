@@ -32,6 +32,8 @@ pub struct UiState {
     pub search_query: String,
     pub search_mode: bool,
     pub show_help: bool,
+    pub show_settings: bool,
+    pub update_status: Option<String>,
 }
 
 impl Default for UiState {
@@ -46,6 +48,8 @@ impl Default for UiState {
             search_query: String::new(),
             search_mode: false,
             show_help: false,
+            show_settings: false,
+            update_status: None,
         }
     }
 }

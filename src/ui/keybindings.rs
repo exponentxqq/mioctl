@@ -24,6 +24,8 @@ pub enum Action {
     TogglePause,
     CycleLogLevel,
     ToggleHelp,
+    UpdateSubs,
+    ShowSettings,
     Refresh,
 }
 
@@ -66,12 +68,17 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
 pub fn parse_mouse(event: MouseEvent) -> Option<Action> {
     match event.kind {
         MouseEventKind::Down(MouseButton::Left) => {
-            // Left click: switch to view based on x position (sidebar area)
             let x = event.column;
+            let row = event.row as usize;
             if x < 16 {
-                let view_idx = (event.row as usize).saturating_sub(1);
-                if view_idx < 5 {
-                    return Some(Action::SwitchView(view_idx));
+                // Sidebar rows: 1-5 = views, 7 = Settings, 8 = Update Subs
+                match row {
+                    1..=5 => {
+                        return Some(Action::SwitchView(row.saturating_sub(1)));
+                    }
+                    7 => return Some(Action::ShowSettings),
+                    8 => return Some(Action::UpdateSubs),
+                    _ => {}
                 }
             }
             None
