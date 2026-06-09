@@ -47,13 +47,9 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
     }
     let content = format!(
         "HTTP_PROXY=http://127.0.0.1:{0}\n\
-         http_proxy=http://127.0.0.1:{0}\n\
          HTTPS_PROXY=http://127.0.0.1:{0}\n\
-         https_proxy=http://127.0.0.1:{0}\n\
          ALL_PROXY=socks5://127.0.0.1:{0}\n\
-         all_proxy=socks5://127.0.0.1:{0}\n\
-         NO_PROXY=localhost,127.0.0.1,::1,.local\n\
-         no_proxy=localhost,127.0.0.1,::1,.local\n",
+         NO_PROXY=localhost,127.0.0.1,::1,.local\n",
         mixed_port
     );
     fs::write(&conf_path, &content)?;
