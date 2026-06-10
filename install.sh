@@ -230,6 +230,17 @@ mkdir -p "$MIHOMO_BIN_DIR"
 gunzip -f "$TMPDIR/mihomo.gz"
 cp "$TMPDIR/mihomo" "$MIHOMO_BIN_DIR/mihomo"
 chmod +x "$MIHOMO_BIN_DIR/mihomo"
+
+# Grant CAP_NET_ADMIN so mihomo can create TUN devices without root.
+# This is required for TUN mode to work.
+if command -v setcap >/dev/null 2>&1; then
+  sudo setcap cap_net_admin+ep "$MIHOMO_BIN_DIR/mihomo" 2>/dev/null && \
+    ok "CAP_NET_ADMIN granted for TUN mode" || \
+    warn "setcap failed — TUN mode may not work without CAP_NET_ADMIN"
+else
+  warn "setcap not found — install libcap2-bin (apt) / libcap (pacman) and run:"
+  warn "  sudo setcap cap_net_admin+ep $MIHOMO_BIN_DIR/mihomo"
+fi
 ok "mihomo $MIHOMO_VERSION → $MIHOMO_BIN_DIR/mihomo"
 
 # ---- create mihomo config (if not exists) ----
