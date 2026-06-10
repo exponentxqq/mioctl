@@ -119,7 +119,7 @@ else
     | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
   if [ -z "$MIOCTL_VERSION" ]; then
     err "could not resolve latest mioctl version from GitHub API."
-    err "  Try: MIOCTL_VERSION=v0.1.0 $0"
+    err "  Try: MIOCTL_VERSION=v0.2.0 $0"
     exit 1
   fi
 fi
