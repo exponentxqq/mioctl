@@ -186,6 +186,74 @@ fn parse_trojan(url: &Url) -> Option<ParsedNode> {
     })
 }
 
+/// Full parsed subscription content — proxies, proxy-groups, and rules.
+/// Preserved as serde_yaml Values so merger can write them back verbatim.
+pub struct SubscriptionContent {
+    pub proxies: serde_yaml::Value,
+    pub proxy_groups: serde_yaml::Value,
+    pub rules: serde_yaml::Value,
+}
+
+pub fn parse_subscription_full(content: &str) -> Result<SubscriptionContent, String> {
+    let yaml_val: serde_yaml::Value =
+        serde_yaml::from_str(content).map_err(|e| format!("YAML parse error: {}", e))?;
+
+    let mapping = yaml_val.as_mapping()
+        .ok_or_else(|| "subscription content is not a YAML mapping".to_string())?;
+
+    let proxies = mapping.get("proxies").cloned().unwrap_or(serde_yaml::Value::Sequence(vec![]));
+    let proxy_groups = mapping.get("proxy-groups").cloned().unwrap_or(serde_yaml::Value::Sequence(vec![]));
+    let rules = mapping.get("rules").cloned().unwrap_or(serde_yaml::Value::Sequence(vec![]));
+
+    // Validate proxies is a non-empty sequence
+    match &proxies {
+        serde_yaml::Value::Sequence(s) if !s.is_empty() => {}
+        _ => return Err("no proxies found in subscription".to_string()),
+    }
+
+    Ok(SubscriptionContent { proxies, proxy_groups, rules })
+}
+
+/// Auto-detect a name from subscription content.
+/// Returns the first proxy-group's name field.
+pub fn detect_subscription_name(content: &str) -> Result<String, String> {
+    let yaml_val: serde_yaml::Value =
+        serde_yaml::from_str(content).map_err(|e| format!("YAML parse error: {}", e))?;
+
+    let mapping = yaml_val.as_mapping()
+        .ok_or_else(|| "not a YAML mapping".to_string())?;
+
+    if let Some(groups) = mapping.get("proxy-groups") {
+        if let Some(seq) = groups.as_sequence() {
+            for item in seq {
+                if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                    if !name.is_empty() {
+                        return Ok(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Err("could not detect name from subscription".into())
+}
+
+/// Extract a readable name from a subscription URL's hostname.
+pub fn name_from_url(url: &str) -> Result<String, String> {
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    if host.is_empty() {
+        return Err("URL has empty host".into());
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() >= 2 {
+        Ok(parts[parts.len() - 2].to_string())
+    } else {
+        Ok(host.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,4 +309,51 @@ mod tests {
         assert_eq!(n.len(), 1);
     }
     #[test] fn test_parse_base64_invalid() { assert!(parse_base64("!!!invalid!!!").is_err()); }
+
+    #[test]
+    fn test_parse_subscription_full_with_groups_and_rules() {
+        let yaml = "proxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 443 }\nproxy-groups:\n  - name: G1\n    type: select\n    proxies: [N1]\nrules:\n  - MATCH,G1";
+        let sub = parse_subscription_full(yaml).unwrap();
+        assert_eq!(sub.proxies.as_sequence().unwrap().len(), 1);
+        assert_eq!(sub.proxy_groups.as_sequence().unwrap().len(), 1);
+        assert_eq!(sub.rules.as_sequence().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_parse_subscription_full_empty_proxies_is_error() {
+        assert!(parse_subscription_full("proxies: []\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_subscription_full_missing_proxies_is_error() {
+        assert!(parse_subscription_full("mode: rule\n").is_err());
+    }
+
+    #[test]
+    fn test_detect_subscription_name_from_groups() {
+        let yaml = "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 443\nproxy-groups:\n  - name: MySub\n    type: select\n    proxies: [N1]";
+        let name = detect_subscription_name(yaml).unwrap();
+        assert_eq!(name, "MySub");
+    }
+
+    #[test]
+    fn test_detect_subscription_name_no_groups_is_error() {
+        let yaml = "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 443\n";
+        assert!(detect_subscription_name(yaml).is_err());
+    }
+
+    #[test]
+    fn test_name_from_url_with_subdomain() {
+        assert_eq!(name_from_url("https://xWjXVnD.doggygosubs.com:8443/api/v1/client/abc").unwrap(), "doggygosubs");
+    }
+
+    #[test]
+    fn test_name_from_url_simple_host() {
+        assert_eq!(name_from_url("https://sub.example.com/link").unwrap(), "example");
+    }
+
+    #[test]
+    fn test_name_from_url_empty_host() {
+        assert!(name_from_url("https:///path").is_err());
+    }
 }
