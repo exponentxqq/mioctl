@@ -36,6 +36,17 @@ pub enum SubAction {
         #[arg(long)]
         all: bool,
     },
+    /// Register a new subscription
+    Register {
+        /// Subscription URL
+        url: String,
+        /// Custom name (auto-detected from subscription if not provided)
+        #[arg(long)]
+        name: Option<String>,
+        /// Skip mihomo reload after registration
+        #[arg(long)]
+        no_reload: bool,
+    },
 }
 
 #[derive(Subcommand)]

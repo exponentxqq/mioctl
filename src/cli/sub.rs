@@ -23,5 +23,13 @@ pub async fn run(action: SubAction) {
                 Err(e) => eprintln!("Connection error: {}", e),
             }
         }
+        SubAction::Register { url, name, no_reload } => {
+            run_register(url, name, no_reload).await;
+        }
     }
+}
+
+async fn run_register(_url: String, _name: Option<String>, _no_reload: bool) {
+    println!("Registering subscription...");
+    // TODO: implement in subsequent tasks
 }
