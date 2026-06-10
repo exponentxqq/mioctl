@@ -24,12 +24,11 @@ pub async fn run(action: SubAction) {
             }
         }
         SubAction::Register { url, name, no_reload } => {
-            run_register(url, name, no_reload).await;
+            let mut config = MioctlConfig::load();
+            match SubscriptionManager::register(&mut config, url, name, no_reload).await {
+                Ok(summary) => println!("{}", summary),
+                Err(e) => eprintln!("Error: {}", e),
+            }
         }
     }
-}
-
-async fn run_register(_url: String, _name: Option<String>, _no_reload: bool) {
-    println!("Registering subscription...");
-    // TODO: implement in subsequent tasks
 }
