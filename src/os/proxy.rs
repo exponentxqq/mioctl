@@ -81,30 +81,32 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
         .args(["set", "org.gnome.system.proxy", "mode", "manual"])
         .output();
     let _ = std::process::Command::new("gsettings")
-        .args([
-            "set", "org.gnome.system.proxy.http", "host", "127.0.0.1",
-        ])
+        .args(["set", "org.gnome.system.proxy.http", "host", "127.0.0.1"])
         .output();
     let _ = std::process::Command::new("gsettings")
         .args([
-            "set", "org.gnome.system.proxy.http", "port",
+            "set",
+            "org.gnome.system.proxy.http",
+            "port",
+            &mixed_port.to_string(),
+        ])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.system.proxy.https", "host", "127.0.0.1"])
+        .output();
+    let _ = std::process::Command::new("gsettings")
+        .args([
+            "set",
+            "org.gnome.system.proxy.https",
+            "port",
             &mixed_port.to_string(),
         ])
         .output();
     let _ = std::process::Command::new("gsettings")
         .args([
-            "set", "org.gnome.system.proxy.https", "host", "127.0.0.1",
-        ])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args([
-            "set", "org.gnome.system.proxy.https", "port",
-            &mixed_port.to_string(),
-        ])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args([
-            "set", "org.gnome.system.proxy", "ignore-hosts",
+            "set",
+            "org.gnome.system.proxy",
+            "ignore-hosts",
             "['localhost', '127.0.0.0/8', '::1', '.local']",
         ])
         .output();

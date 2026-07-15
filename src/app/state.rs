@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use crate::api::client::MihomoClient;
 use crate::api::types::*;
 use crate::config::mioctl_config::MioctlConfig;
 use chrono::Local;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Maximum number of log entries to retain.
 pub const LOG_CAP: usize = 1000;
@@ -147,7 +147,10 @@ impl AppState {
             rules: RulesResponse { rules: Vec::new() },
             connections: Vec::new(),
             traffic: Traffic { up: 0, down: 0 },
-            memory: Memory { inuse: 0, oslimit: 0 },
+            memory: Memory {
+                inuse: 0,
+                oslimit: 0,
+            },
             tun: None,
             mixed_port: None,
             allow_lan: None,
@@ -164,8 +167,7 @@ impl AppState {
 
     pub fn connect(&mut self) {
         let cfg = &self.config.mihomo;
-        self.client =
-            MihomoClient::new(&cfg.external_controller, Some(cfg.secret.clone())).ok();
+        self.client = MihomoClient::new(&cfg.external_controller, Some(cfg.secret.clone())).ok();
     }
 
     pub fn update_time(&mut self) {
@@ -175,9 +177,15 @@ impl AppState {
     /// Push an app-level log entry with timestamp, respecting configured log level.
     pub fn add_log(&mut self, level: &str, msg: &str) {
         let cfg_level = self.config.preferences.app_log_level.as_str();
-        if cfg_level == "off" { return; }
-        if cfg_level == "info" && level == "debug" { return; }
-        if cfg_level == "error" && level != "error" { return; }
+        if cfg_level == "off" {
+            return;
+        }
+        if cfg_level == "info" && level == "debug" {
+            return;
+        }
+        if cfg_level == "error" && level != "error" {
+            return;
+        }
 
         let entry = LogEntry {
             level: level.to_string(),
@@ -213,9 +221,30 @@ mod tests {
 
     #[test]
     fn test_mode_selector_idx_from_proxy_mode() {
-        assert_eq!(match ProxyMode::Rule { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 0);
-        assert_eq!(match ProxyMode::Global { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 1);
-        assert_eq!(match ProxyMode::Direct { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 2);
+        assert_eq!(
+            match ProxyMode::Rule {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            0
+        );
+        assert_eq!(
+            match ProxyMode::Global {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            1
+        );
+        assert_eq!(
+            match ProxyMode::Direct {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            2
+        );
     }
 
     #[test]
@@ -238,8 +267,14 @@ mod tests {
         assert_eq!(LoadingKind::SwitchNode.as_str(), "Switching node...");
         assert_eq!(LoadingKind::ToggleProxy.as_str(), "Toggling proxy...");
         assert_eq!(LoadingKind::TestNodeDelay.as_str(), "Testing delay...");
-        assert_eq!(LoadingKind::TestGroupDelay.as_str(), "Testing group delay...");
-        assert_eq!(LoadingKind::UpdateSubs.as_str(), "Updating subscriptions...");
+        assert_eq!(
+            LoadingKind::TestGroupDelay.as_str(),
+            "Testing group delay..."
+        );
+        assert_eq!(
+            LoadingKind::UpdateSubs.as_str(),
+            "Updating subscriptions..."
+        );
     }
 
     #[test]

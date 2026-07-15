@@ -1,3 +1,5 @@
+use crate::app::state::{ActiveView, AppState};
+use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -5,8 +7,6 @@ use ratatui::{
     widgets::{Block, List, ListItem},
     Frame,
 };
-use crate::app::state::{ActiveView, AppState};
-use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     let conns_label = format!("Conns ({:<3})", state.connections.len());

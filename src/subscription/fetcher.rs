@@ -1,10 +1,6 @@
 use reqwest::Client;
 
-const UA_CANDIDATES: &[&str] = &[
-    "mihomo/{version}",
-    "ClashMeta/1.19.0",
-    "clash-verge/1.3.8",
-];
+const UA_CANDIDATES: &[&str] = &["mihomo/{version}", "ClashMeta/1.19.0", "clash-verge/1.3.8"];
 
 /// Fetch subscription content, trying multiple User-Agents in order.
 /// First response that contains >= 3 valid proxy entries wins.
@@ -54,8 +50,11 @@ fn count_proxy_entries(body: &str) -> usize {
     body.lines()
         .filter(|l| {
             let t = l.trim();
-            t.starts_with("- ") || t.starts_with("- {") || t.starts_with("ss://")
-                || t.starts_with("vmess://") || t.starts_with("trojan://")
+            t.starts_with("- ")
+                || t.starts_with("- {")
+                || t.starts_with("ss://")
+                || t.starts_with("vmess://")
+                || t.starts_with("trojan://")
         })
         .count()
 }

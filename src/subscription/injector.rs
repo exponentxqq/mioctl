@@ -5,9 +5,9 @@ use std::path::PathBuf;
 
 fn yaml_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
-     .replace('"', "\\\"")
-     .replace('\n', "\\n")
-     .replace('\t', "\\t")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
 }
 
 pub fn generate_provider_yaml(_name: &str, nodes: &[ParsedNode]) -> String {
@@ -15,7 +15,10 @@ pub fn generate_provider_yaml(_name: &str, nodes: &[ParsedNode]) -> String {
     for node in nodes {
         let mut entry = format!(
             "  - name: \"{}\"\n    type: {}\n    server: {}\n    port: {}\n",
-            yaml_escape(&node.name), node.node_type, node.server, node.port
+            yaml_escape(&node.name),
+            node.node_type,
+            node.server,
+            node.port
         );
         if let Some(ref cipher) = node.cipher {
             entry.push_str(&format!("    cipher: {}\n", cipher));

@@ -15,7 +15,8 @@ pub async fn run(action: SubAction) {
             } else {
                 Some(config.mihomo.secret.clone())
             };
-            match crate::api::client::MihomoClient::new(&config.mihomo.external_controller, secret) {
+            match crate::api::client::MihomoClient::new(&config.mihomo.external_controller, secret)
+            {
                 Ok(c) => match SubscriptionManager::update_all(&mut config, &c).await {
                     Ok(result) => println!("{}", result),
                     Err(e) => eprintln!("Error: {}", e),
@@ -23,7 +24,11 @@ pub async fn run(action: SubAction) {
                 Err(e) => eprintln!("Connection error: {}", e),
             }
         }
-        SubAction::Register { url, name, no_reload } => {
+        SubAction::Register {
+            url,
+            name,
+            no_reload,
+        } => {
             let mut config = MioctlConfig::load();
             match SubscriptionManager::register(&mut config, url, name, no_reload).await {
                 Ok(summary) => println!("{}", summary),

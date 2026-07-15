@@ -1,3 +1,5 @@
+use crate::app::state::AppState;
+use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use ratatui::{
     layout::Rect,
     style::{Style, Stylize},
@@ -5,11 +7,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use crate::app::state::AppState;
-use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 const MODES: &[(&str, &str)] = &[
-    ("Rule",   "按规则路由，匹配分流策略"),
+    ("Rule", "按规则路由，匹配分流策略"),
     ("Global", "全部流量经代理服务器转发"),
     ("Direct", "全部流量直连，不经代理"),
 ];
@@ -49,9 +49,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
         lines.push(Line::from(""));
     }
 
-    lines.push(Line::from(
-        "Enter 确认 · Esc 取消".fg(T.text_secondary)
-    ));
+    lines.push(Line::from("Enter 确认 · Esc 取消".fg(T.text_secondary)));
 
     let text = Paragraph::new(lines).wrap(Wrap { trim: true });
     f.render_widget(text, inner);
@@ -62,5 +60,10 @@ fn centered_rect(px: u16, py: u16, area: Rect) -> Rect {
     let h = area.height * py / 100;
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }

@@ -48,16 +48,15 @@ impl ProxyManager {
         ProxyMode::Rule
     }
 
-    pub async fn set_proxy_mode(
-        client: &MihomoClient,
-        mode: &ProxyMode,
-    ) -> ApiResult<()> {
+    pub async fn set_proxy_mode(client: &MihomoClient, mode: &ProxyMode) -> ApiResult<()> {
         let mode_str = match mode {
             ProxyMode::Global => "global",
             ProxyMode::Rule => "rule",
             ProxyMode::Direct => "direct",
         };
-        client.patch_configs(serde_json::json!({"mode": mode_str})).await
+        client
+            .patch_configs(serde_json::json!({"mode": mode_str}))
+            .await
     }
 }
 
@@ -106,14 +105,39 @@ mod tests {
 
     #[test]
     fn test_mode_to_index_mapping() {
-        assert_eq!(match ProxyMode::Rule { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 0);
-        assert_eq!(match ProxyMode::Global { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 1);
-        assert_eq!(match ProxyMode::Direct { ProxyMode::Rule => 0, ProxyMode::Global => 1, ProxyMode::Direct => 2 }, 2);
+        assert_eq!(
+            match ProxyMode::Rule {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            0
+        );
+        assert_eq!(
+            match ProxyMode::Global {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            1
+        );
+        assert_eq!(
+            match ProxyMode::Direct {
+                ProxyMode::Rule => 0,
+                ProxyMode::Global => 1,
+                ProxyMode::Direct => 2,
+            },
+            2
+        );
     }
 
     #[test]
     fn test_index_to_mode_roundtrip() {
-        for (idx, expected) in [(0, ProxyMode::Rule), (1, ProxyMode::Global), (2, ProxyMode::Direct)] {
+        for (idx, expected) in [
+            (0, ProxyMode::Rule),
+            (1, ProxyMode::Global),
+            (2, ProxyMode::Direct),
+        ] {
             let mode = match idx {
                 0 => ProxyMode::Rule,
                 1 => ProxyMode::Global,

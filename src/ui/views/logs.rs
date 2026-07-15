@@ -1,3 +1,5 @@
+use crate::app::state::AppState;
+use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -5,12 +7,13 @@ use ratatui::{
     widgets::{Block, Paragraph, Wrap},
     Frame,
 };
-use crate::app::state::AppState;
-use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     // Collect filtered entries with their absolute index in state.logs
-    let filtered: Vec<(usize, &crate::api::types::LogEntry)> = state.logs.iter().enumerate()
+    let filtered: Vec<(usize, &crate::api::types::LogEntry)> = state
+        .logs
+        .iter()
+        .enumerate()
         .filter(|(_, e)| match state.ui.log_level_filter.as_deref() {
             Some(level) => e.level == level,
             None => true,
@@ -23,7 +26,8 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
     // Find cursor position in filtered list
     let cursor_abs = state.ui.log_cursor.min(state.logs.len().saturating_sub(1));
     let cursor_filt = if total > 0 {
-        filtered.iter()
+        filtered
+            .iter()
             .position(|(abs, _)| *abs >= cursor_abs)
             .unwrap_or(total.saturating_sub(1))
     } else {
@@ -51,36 +55,43 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
         (0, 0)
     };
 
-    let log_lines: Vec<Line> = filtered.iter().enumerate().map(|(filt_idx, (abs_idx, entry))| {
-        let color = match entry.level.as_str() {
-            "error" => T.red, "warning" => T.yellow, "debug" => T.text_secondary, _ => T.green,
-        };
+    let log_lines: Vec<Line> = filtered
+        .iter()
+        .enumerate()
+        .map(|(filt_idx, (abs_idx, entry))| {
+            let color = match entry.level.as_str() {
+                "error" => T.red,
+                "warning" => T.yellow,
+                "debug" => T.text_secondary,
+                _ => T.green,
+            };
 
-        let in_selection = state.ui.log_visual
-            && *abs_idx >= sel_abs.0 && *abs_idx <= sel_abs.1;
-        let is_cursor = *abs_idx == cursor_abs;
-        let highlighted = in_selection || is_cursor;
-        let _ = filt_idx; // unused — for clarity that we have both indices
+            let in_selection =
+                state.ui.log_visual && *abs_idx >= sel_abs.0 && *abs_idx <= sel_abs.1;
+            let is_cursor = *abs_idx == cursor_abs;
+            let highlighted = in_selection || is_cursor;
+            let _ = filt_idx; // unused — for clarity that we have both indices
 
-        Line::from(vec![
-            Span::styled(
-                format!("{:5} ", entry.level.to_uppercase()),
-                if highlighted {
-                    Style::default().fg(color).bg(T.surface)
-                } else {
-                    Style::default().fg(color)
-                },
-            ),
-            Span::styled(
-                &entry.payload,
-                if highlighted {
-                    Style::default().fg(T.text).bg(T.surface)
-                } else {
-                    Style::default().fg(T.text)
-                },
-            ),
-        ])
-    }).collect();
+            Line::from(vec![
+                Span::styled(
+                    format!("{:5} ", entry.level.to_uppercase()),
+                    if highlighted {
+                        Style::default().fg(color).bg(T.surface)
+                    } else {
+                        Style::default().fg(color)
+                    },
+                ),
+                Span::styled(
+                    &entry.payload,
+                    if highlighted {
+                        Style::default().fg(T.text).bg(T.surface)
+                    } else {
+                        Style::default().fg(T.text)
+                    },
+                ),
+            ])
+        })
+        .collect();
 
     let paused = if state.ui.log_paused { " [PAUSED]" } else { "" };
     let visual = if state.ui.log_visual { " [VISUAL]" } else { "" };
@@ -95,7 +106,9 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
         total, paused, level, cursor_info, visual,
     );
     let block = Block::default().title(title);
-    let para = Paragraph::new(log_lines).block(block).wrap(Wrap { trim: true })
+    let para = Paragraph::new(log_lines)
+        .block(block)
+        .wrap(Wrap { trim: true })
         .scroll((scroll as u16, 0));
     f.render_widget(para, area);
 }

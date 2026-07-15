@@ -1,11 +1,11 @@
+use crate::app::state::AppState;
+use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use ratatui::{
     layout::Rect,
     style::Style,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use crate::app::state::AppState;
-use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 pub fn render(f: &mut Frame, state: &AppState) {
     let area = centered_rect(50, 60, f.area());
@@ -41,7 +41,11 @@ pub fn render(f: &mut Frame, state: &AppState) {
          {}\n\n\
          Press Esc or click outside to close",
         cfg.mihomo.external_controller,
-        if cfg.mihomo.secret.is_empty() { "none" } else { "***" },
+        if cfg.mihomo.secret.is_empty() {
+            "none"
+        } else {
+            "***"
+        },
         connected,
         state.version,
         state.config.subscriptions.items.len(),
@@ -51,7 +55,9 @@ pub fn render(f: &mut Frame, state: &AppState) {
         crate::config::mioctl_config::MioctlConfig::config_path().display(),
     );
 
-    let p = Paragraph::new(text).style(Style::default().fg(T.text)).wrap(Wrap { trim: true });
+    let p = Paragraph::new(text)
+        .style(Style::default().fg(T.text))
+        .wrap(Wrap { trim: true });
     f.render_widget(p, inner);
 }
 
@@ -60,5 +66,10 @@ fn centered_rect(px: u16, py: u16, area: Rect) -> Rect {
     let h = area.height * py / 100;
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }

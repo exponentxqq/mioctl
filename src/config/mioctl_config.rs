@@ -177,7 +177,10 @@ mod tests {
         assert_eq!(config.mihomo.secret, "");
         assert_eq!(config.subscriptions.update_interval_minutes, 240);
         assert!(config.subscriptions.items.is_empty());
-        assert_eq!(config.preferences.delay_test_url, "https://www.gstatic.com/generate_204");
+        assert_eq!(
+            config.preferences.delay_test_url,
+            "https://www.gstatic.com/generate_204"
+        );
     }
 
     #[test]
@@ -200,7 +203,10 @@ mod tests {
         let deserialized: MioctlConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.subscriptions.items.len(), 1);
         assert_eq!(deserialized.subscriptions.items[0].name, "my-sub");
-        assert_eq!(deserialized.preferences.delay_test_url, "http://localhost/test");
+        assert_eq!(
+            deserialized.preferences.delay_test_url,
+            "http://localhost/test"
+        );
     }
 
     #[test]

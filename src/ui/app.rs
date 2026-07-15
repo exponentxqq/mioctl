@@ -12,11 +12,13 @@ use ratatui::{
 
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
-use crate::os;
 use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState, LOG_CAP};
+use crate::os;
 use crate::subscription::manager::SubscriptionManager;
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
-use crate::ui::views::{connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar};
+use crate::ui::views::{
+    connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar,
+};
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 
 /// Collect payload text from the selected log range, joined by newlines.
@@ -58,10 +60,20 @@ fn start_proxy_guard(shared: SharedState, port: u16) -> tokio::task::AbortHandle
                 .args(["set", "org.gnome.system.proxy.https", "host", "127.0.0.1"])
                 .output();
             let _ = std::process::Command::new("gsettings")
-                .args(["set", "org.gnome.system.proxy.http", "port", &port.to_string()])
+                .args([
+                    "set",
+                    "org.gnome.system.proxy.http",
+                    "port",
+                    &port.to_string(),
+                ])
                 .output();
             let _ = std::process::Command::new("gsettings")
-                .args(["set", "org.gnome.system.proxy.https", "port", &port.to_string()])
+                .args([
+                    "set",
+                    "org.gnome.system.proxy.https",
+                    "port",
+                    &port.to_string(),
+                ])
                 .output();
             // Re-write proxy.env in case it was deleted
             let env_content = format!(
@@ -93,11 +105,7 @@ fn copy_to_clipboard(text: &str) -> bool {
         ("xclip", vec!["-selection", "clipboard"])
     };
 
-    match Command::new(cmd)
-        .args(&args)
-        .stdin(Stdio::piped())
-        .spawn()
-    {
+    match Command::new(cmd).args(&args).stdin(Stdio::piped()).spawn() {
         Ok(mut child) => {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(text.as_bytes());
@@ -111,8 +119,8 @@ fn copy_to_clipboard(text: &str) -> bool {
 /// Toggle `tun.enable` in a mihomo YAML config file.
 fn set_tun_config(path: &str, enable: bool) -> Result<(), String> {
     let content = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path, e))?;
-    let mut doc: serde_yaml::Value = serde_yaml::from_str(&content)
-        .map_err(|e| format!("parse YAML: {}", e))?;
+    let mut doc: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| format!("parse YAML: {}", e))?;
     let tun = doc["tun"]
         .as_mapping_mut()
         .ok_or_else(|| "no 'tun' section in config".to_string())?;
@@ -137,7 +145,9 @@ pub async fn run_tui() -> Result<(), String> {
                 s.connect();
                 s.client.clone()
             };
-            let Some(ref client) = client else { return; };
+            let Some(ref client) = client else {
+                return;
+            };
 
             // Concurrent init — all requests in parallel, max 3s total
             let t = Duration::from_secs(3);
@@ -171,9 +181,15 @@ pub async fn run_tui() -> Result<(), String> {
                     s.proxies = p;
                     s.groups = g;
                 }
-                if let Ok(c) = conns_r { s.connections = c; }
-                if let Ok(r) = rules_r { s.rules = r; }
-                if let Ok(t) = traffic_r { s.traffic = t; }
+                if let Ok(c) = conns_r {
+                    s.connections = c;
+                }
+                if let Ok(r) = rules_r {
+                    s.rules = r;
+                }
+                if let Ok(t) = traffic_r {
+                    s.traffic = t;
+                }
                 if let Ok(c) = configs_r {
                     s.proxy_mode = match c.mode.as_deref() {
                         Some("global") => ProxyMode::Global,
@@ -185,7 +201,9 @@ pub async fn run_tui() -> Result<(), String> {
                     s.tun = c.tun;
                     s.system_proxy_enabled = os::proxy::detect_system_proxy(c.mixed_port);
                 }
-                if let Ok(m) = memory_r { s.memory = m; }
+                if let Ok(m) = memory_r {
+                    s.memory = m;
+                }
                 s.update_time();
                 s.add_log("info", "Connected");
                 s.ui.loading = None;
@@ -223,7 +241,9 @@ pub async fn run_tui() -> Result<(), String> {
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(key) => {
-                    if key.kind == KeyEventKind::Release { continue; }
+                    if key.kind == KeyEventKind::Release {
+                        continue;
+                    }
                     let mut s = state.lock().await;
                     // Search mode: capture keys as search input
                     if s.ui.search_mode {
@@ -270,12 +290,18 @@ pub async fn run_tui() -> Result<(), String> {
                                             Ok(()) => {
                                                 refresh_state(&s2).await;
                                                 let mut s = s2.lock().await;
-                                                s.add_log("info", &format!("Mode switched to {:?}", target));
+                                                s.add_log(
+                                                    "info",
+                                                    &format!("Mode switched to {:?}", target),
+                                                );
                                                 s.ui.loading = None;
                                             }
                                             Err(e) => {
                                                 let mut s = s2.lock().await;
-                                                s.add_log("error", &format!("Failed to switch mode: {}", e));
+                                                s.add_log(
+                                                    "error",
+                                                    &format!("Failed to switch mode: {}", e),
+                                                );
                                                 s.ui.loading = None;
                                             }
                                         }
@@ -310,7 +336,10 @@ pub async fn run_tui() -> Result<(), String> {
                                 let copied = copy_to_clipboard(&text);
                                 s.ui.log_visual = false;
                                 if !copied {
-                                    s.add_log("error", "xclip failed — is xclip installed? (pacman -S xclip)");
+                                    s.add_log(
+                                        "error",
+                                        "xclip failed — is xclip installed? (pacman -S xclip)",
+                                    );
                                 }
                                 drop(s);
                                 continue;
@@ -321,7 +350,9 @@ pub async fn run_tui() -> Result<(), String> {
                             _ => {}
                         }
                     } else if let Some(action) = parse_key(key) {
-                        if !handle_action(&action, &mut s, state.clone()).await { break; }
+                        if !handle_action(&action, &mut s, state.clone()).await {
+                            break;
+                        }
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -359,7 +390,11 @@ pub async fn run_tui() -> Result<(), String> {
 
     // Fault-tolerant cleanup — attempt all steps even if some fail
     let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture);
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
     let _ = terminal.show_cursor();
     Ok(())
 }
@@ -406,9 +441,7 @@ fn render_frame(
     }
 }
 
-async fn handle_action(
-    action: &Action, s: &mut AppState, shared: SharedState,
-) -> bool {
+async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -> bool {
     let client = s.client.clone();
     match action {
         Action::Quit => return false,
@@ -431,14 +464,23 @@ async fn handle_action(
         }
         Action::SwitchView(i) => {
             let v = match i {
-                0 => Dashboard, 1 => Proxies, 2 => Connections, 3 => Rules, 4 => Logs, _ => return true,
+                0 => Dashboard,
+                1 => Proxies,
+                2 => Connections,
+                3 => Rules,
+                4 => Logs,
+                _ => return true,
             };
             s.ui.active_view = v;
         }
         Action::MoveDown => match s.ui.active_view {
             Proxies => {
                 let i = s.ui.selected_group_idx;
-                let m = s.groups.get(i).map(|g| g.all.len().saturating_sub(1)).unwrap_or(0);
+                let m = s
+                    .groups
+                    .get(i)
+                    .map(|g| g.all.len().saturating_sub(1))
+                    .unwrap_or(0);
                 s.ui.selected_node_idx = (s.ui.selected_node_idx + 1).min(m);
             }
             Connections => {
@@ -472,17 +514,25 @@ async fn handle_action(
         Action::JumpTop => match s.ui.active_view {
             Proxies => s.ui.selected_node_idx = 0,
             Connections => s.ui.selected_conn_idx = 0,
-            Logs => { s.ui.log_cursor = 0; }
+            Logs => {
+                s.ui.log_cursor = 0;
+            }
             _ => {}
         },
         Action::JumpBottom => match s.ui.active_view {
             Proxies => {
                 let i = s.ui.selected_group_idx;
-                let m = s.groups.get(i).map(|g| g.all.len().saturating_sub(1)).unwrap_or(0);
+                let m = s
+                    .groups
+                    .get(i)
+                    .map(|g| g.all.len().saturating_sub(1))
+                    .unwrap_or(0);
                 s.ui.selected_node_idx = m;
             }
             Connections => s.ui.selected_conn_idx = s.connections.len().saturating_sub(1),
-            Logs => { s.ui.log_cursor = s.logs.len().saturating_sub(1); }
+            Logs => {
+                s.ui.log_cursor = s.logs.len().saturating_sub(1);
+            }
             _ => {}
         },
         Action::OpenModeSelector => {
@@ -650,7 +700,8 @@ async fn handle_action(
             s.ui.selected_node_idx = 0;
         }
         Action::NextGroup => {
-            s.ui.selected_group_idx = (s.ui.selected_group_idx + 1).min(s.groups.len().saturating_sub(1));
+            s.ui.selected_group_idx =
+                (s.ui.selected_group_idx + 1).min(s.groups.len().saturating_sub(1));
             s.ui.selected_node_idx = 0;
         }
         Action::CloseConnection => {
@@ -723,9 +774,13 @@ async fn handle_action(
             if s.ui.search_mode {
                 s.ui.search_mode = false;
                 s.ui.search_query.clear();
-            } else if s.ui.show_mode_selector { s.ui.show_mode_selector = false; }
-            else if s.ui.show_help { s.ui.show_help = false; }
-            else if s.ui.show_settings { s.ui.show_settings = false; }
+            } else if s.ui.show_mode_selector {
+                s.ui.show_mode_selector = false;
+            } else if s.ui.show_help {
+                s.ui.show_help = false;
+            } else if s.ui.show_settings {
+                s.ui.show_settings = false;
+            }
         }
         Action::Search => {
             s.ui.search_mode = true;
@@ -786,7 +841,10 @@ async fn handle_action(
                     return true;
                 };
                 if !copied {
-                    s.add_log("error", "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)");
+                    s.add_log(
+                        "error",
+                        "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)",
+                    );
                 } else {
                     s.add_log("info", &format!("Copied: {} chars", text.len()));
                 }
@@ -832,14 +890,22 @@ async fn refresh_state(shared: &SharedState) {
     if let Ok((p, g)) = proxies {
         s.proxies = p;
         s.groups = g;
-        s.ui.selected_group_idx = s.ui.selected_group_idx.min(s.groups.len().saturating_sub(1));
+        s.ui.selected_group_idx =
+            s.ui.selected_group_idx
+                .min(s.groups.len().saturating_sub(1));
         if let Some(grp) = s.groups.get(s.ui.selected_group_idx) {
             s.ui.selected_node_idx = s.ui.selected_node_idx.min(grp.all.len().saturating_sub(1));
         }
     }
-    if let Ok(c) = conns { s.connections = c; }
-    if let Ok(r) = rules { s.rules = r; }
-    if let Ok(t) = traffic { s.traffic = t; }
+    if let Ok(c) = conns {
+        s.connections = c;
+    }
+    if let Ok(r) = rules {
+        s.rules = r;
+    }
+    if let Ok(t) = traffic {
+        s.traffic = t;
+    }
     if let Ok(c) = configs {
         s.proxy_mode = match c.mode.as_deref() {
             Some("global") => ProxyMode::Global,
@@ -851,15 +917,17 @@ async fn refresh_state(shared: &SharedState) {
         s.tun = c.tun;
         s.system_proxy_enabled = os::proxy::detect_system_proxy(c.mixed_port);
     }
-    if let Ok(m) = memory { s.memory = m; }
+    if let Ok(m) = memory {
+        s.memory = m;
+    }
     s.update_time();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_set_tun_enable() {

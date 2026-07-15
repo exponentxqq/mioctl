@@ -1,10 +1,10 @@
+use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use ratatui::{
     layout::Rect,
     style::Style,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
-use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 
 const HELP_TEXT: &str = r#"
  Global                     Proxy View
@@ -53,5 +53,10 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let h = area.height * percent_y / 100;
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }

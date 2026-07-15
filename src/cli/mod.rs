@@ -1,8 +1,11 @@
 use clap::{Parser, Subcommand};
 
 pub mod connect;
+pub mod doctor;
 pub mod sub;
 pub mod tui;
+
+pub use doctor::DoctorAction;
 
 #[derive(Parser)]
 #[command(name = "mioctl", version, about = "mihomo terminal management tool")]
@@ -26,6 +29,12 @@ pub enum Commands {
     Connect {
         #[command(subcommand)]
         action: ConnectAction,
+    },
+
+    /// Run diagnostic checks on mihomo setup
+    Doctor {
+        #[command(subcommand)]
+        action: DoctorAction,
     },
 }
 

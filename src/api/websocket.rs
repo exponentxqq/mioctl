@@ -1,7 +1,7 @@
+use crate::api::client::MihomoClient;
+use crate::api::types::{Connection, LogEntry, Memory, Traffic};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use crate::api::client::MihomoClient;
-use crate::api::types::{Traffic, Memory, Connection, LogEntry};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -19,7 +19,8 @@ impl MihomoClient {
     ) -> Result<mpsc::Receiver<Traffic>, crate::api::error::ApiError> {
         let (tx, rx) = mpsc::channel::<Traffic>(64);
         let url = self.ws_url("/traffic");
-        let (ws_stream, _) = connect_async(&url).await
+        let (ws_stream, _) = connect_async(&url)
+            .await
             .map_err(|e| crate::api::error::ApiError::WebSocketError(e.to_string()))?;
         let (_, mut read) = ws_stream.split();
 
@@ -41,7 +42,8 @@ impl MihomoClient {
     ) -> Result<mpsc::Receiver<Vec<Connection>>, crate::api::error::ApiError> {
         let (tx, rx) = mpsc::channel::<Vec<Connection>>(64);
         let url = self.ws_url("/connections");
-        let (ws_stream, _) = connect_async(&url).await
+        let (ws_stream, _) = connect_async(&url)
+            .await
             .map_err(|e| crate::api::error::ApiError::WebSocketError(e.to_string()))?;
         let (_, mut read) = ws_stream.split();
 
@@ -75,7 +77,8 @@ impl MihomoClient {
             "/logs".to_string()
         };
         let url = self.ws_url(&path);
-        let (ws_stream, _) = connect_async(&url).await
+        let (ws_stream, _) = connect_async(&url)
+            .await
             .map_err(|e| crate::api::error::ApiError::WebSocketError(e.to_string()))?;
         let (_, mut read) = ws_stream.split();
 
@@ -97,7 +100,8 @@ impl MihomoClient {
     ) -> Result<mpsc::Receiver<Memory>, crate::api::error::ApiError> {
         let (tx, rx) = mpsc::channel::<Memory>(16);
         let url = self.ws_url("/memory");
-        let (ws_stream, _) = connect_async(&url).await
+        let (ws_stream, _) = connect_async(&url)
+            .await
             .map_err(|e| crate::api::error::ApiError::WebSocketError(e.to_string()))?;
         let (_, mut read) = ws_stream.split();
 

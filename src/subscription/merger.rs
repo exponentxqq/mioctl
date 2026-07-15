@@ -1,12 +1,32 @@
-use serde_yaml::{self, Value, Mapping};
+use serde_yaml::{self, Mapping, Value};
 
 /// Keys to preserve in the mihomo config during merge (infrastructure config).
 const PRESERVE_KEYS: &[&str] = &[
-    "mixed-port", "external-controller", "mode", "log-level", "allow-lan",
-    "dns", "tun", "sniffer", "ipv6", "profile", "hosts", "interface-name",
-    "routing-mark", "bind-address", "authentication", "tcp-concurrent",
-    "geodata-mode", "geox-url", "unified-delay", "keep-alive-interval",
-    "port", "socks-port", "redir-port", "tproxy-port", "find-process-mode",
+    "mixed-port",
+    "external-controller",
+    "mode",
+    "log-level",
+    "allow-lan",
+    "dns",
+    "tun",
+    "sniffer",
+    "ipv6",
+    "profile",
+    "hosts",
+    "interface-name",
+    "routing-mark",
+    "bind-address",
+    "authentication",
+    "tcp-concurrent",
+    "geodata-mode",
+    "geox-url",
+    "unified-delay",
+    "keep-alive-interval",
+    "port",
+    "socks-port",
+    "redir-port",
+    "tproxy-port",
+    "find-process-mode",
 ];
 
 /// Default template for new config.yaml when none exists.
@@ -17,26 +37,28 @@ log-level: info
 allow-lan: false
 dns:
   enable: true
-  enhanced-mode: redir-host
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.github.com'
+    - github.com
   nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
-  fallback:
-    - tls://1.1.1.1:853
-    - tls://8.8.8.8:853
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
+    - https://223.5.5.5/dns-query
+    - https://doh.pub/dns-query
 tun:
   enable: true
   stack: gvisor
   auto-route: true
   auto-detect-interface: true
+  dns-hijack:
+    - any:53
 sniffer:
   enable: true
   sniffing:
     - tls
     - http
+rules:
+  - DST-PORT,22,DIRECT
 "#;
 
 pub struct MergerResult {
@@ -68,18 +90,9 @@ pub fn merge_mihomo_config(
 
     config.remove("proxy-providers");
 
-    config.insert(
-        Value::String("proxies".into()),
-        proxies.clone(),
-    );
-    config.insert(
-        Value::String("proxy-groups".into()),
-        proxy_groups.clone(),
-    );
-    config.insert(
-        Value::String("rules".into()),
-        rules.clone(),
-    );
+    config.insert(Value::String("proxies".into()), proxies.clone());
+    config.insert(Value::String("proxy-groups".into()), proxy_groups.clone());
+    config.insert(Value::String("rules".into()), rules.clone());
 
     // Re-build mapping in preferred key order: infrastructure first, then proxies/groups/rules
     let mut ordered = Mapping::new();
@@ -118,8 +131,7 @@ pub fn backup_file(path: &str) -> Result<(), String> {
     if !p.exists() {
         return Ok(());
     }
-    std::fs::copy(path, format!("{}.bak", path))
-        .map_err(|e| format!("backup failed: {}", e))?;
+    std::fs::copy(path, format!("{}.bak", path)).map_err(|e| format!("backup failed: {}", e))?;
     Ok(())
 }
 
@@ -163,10 +175,8 @@ dns:
         let proxy_groups = full.get("proxy-groups").unwrap();
         let rules = full.get("rules").unwrap();
 
-        let result = merge_mihomo_config(
-            path.to_str().unwrap(),
-            proxies, proxy_groups, rules,
-        ).unwrap();
+        let result =
+            merge_mihomo_config(path.to_str().unwrap(), proxies, proxy_groups, rules).unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("dns:"));
@@ -188,14 +198,12 @@ dns:
         let proxy_groups = Value::Sequence(vec![]);
         let rules = Value::Sequence(vec![]);
 
-        let result = merge_mihomo_config(
-            path.to_str().unwrap(),
-            &proxies, &proxy_groups, &rules,
-        ).unwrap();
+        let result =
+            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules).unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("gvisor"));
-        assert!(result.yaml.contains("redir-host"));
+        assert!(result.yaml.contains("fake-ip"));
     }
 
     #[test]

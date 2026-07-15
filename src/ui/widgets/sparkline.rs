@@ -54,7 +54,12 @@ pub fn render(f: &mut Frame, area: Rect, colors: (Color, Color), data: &TrafficS
         .style(Style::default().fg(colors.1))
         .bar_set(symbols::bar::NINE_LEVELS);
     let up_area = Rect::new(area.x, area.y, area.width, area.height / 2);
-    let down_area = Rect::new(area.x, area.y + area.height / 2, area.width, area.height / 2);
+    let down_area = Rect::new(
+        area.x,
+        area.y + area.height / 2,
+        area.width,
+        area.height / 2,
+    );
     f.render_widget(up_widget, up_area);
     f.render_widget(down_widget, down_area);
 }

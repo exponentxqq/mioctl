@@ -1,5 +1,5 @@
-use reqwest::{header, Client};
 use crate::api::error::{ApiError, ApiResult};
+use reqwest::{header, Client};
 
 #[derive(Clone)]
 pub struct MihomoClient {

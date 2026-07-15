@@ -4,14 +4,14 @@ use crate::api::types::*;
 
 /// Percent-encode a string for use in URL path segments.
 fn encode_path(s: &str) -> String {
-    s.bytes().flat_map(|b| {
-        match b {
+    s.bytes()
+        .flat_map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 vec![b as char]
             }
             _ => format!("%{:02X}", b).chars().collect(),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -65,11 +65,17 @@ impl MihomoClient {
     }
 
     pub async fn test_proxy_delay(
-        &self, name: &str, test_url: &str, timeout_ms: u64,
+        &self,
+        name: &str,
+        test_url: &str,
+        timeout_ms: u64,
     ) -> ApiResult<DelayResponse> {
         let url = format!(
             "{}/proxies/{}/delay?url={}&timeout={}",
-            self.base_url(), encode_path(name), test_url, timeout_ms
+            self.base_url(),
+            encode_path(name),
+            test_url,
+            timeout_ms
         );
         let resp = self.client().get(&url).send().await?;
         let data = Self::check_response(resp).await?.json().await?;
@@ -83,7 +89,9 @@ impl MihomoClient {
     /// (Selector, URLTest, Fallback, LoadBalance, etc.).
     /// Sorted by name for stable ordering across refreshes.
     pub fn extract_groups(proxies: &ProxiesResponse) -> Vec<Group> {
-        let mut groups: Vec<Group> = proxies.proxies.values()
+        let mut groups: Vec<Group> = proxies
+            .proxies
+            .values()
             .filter(|p| !p.all.is_empty())
             .map(|p| Group {
                 name: p.name.clone(),
@@ -104,11 +112,17 @@ impl MihomoClient {
     }
 
     pub async fn test_group_delay(
-        &self, group: &str, test_url: &str, timeout_ms: u64,
+        &self,
+        group: &str,
+        test_url: &str,
+        timeout_ms: u64,
     ) -> ApiResult<Vec<DelayResponse>> {
         let url = format!(
             "{}/group/{}/delay?url={}&timeout={}",
-            self.base_url(), encode_path(group), test_url, timeout_ms
+            self.base_url(),
+            encode_path(group),
+            test_url,
+            timeout_ms
         );
         let resp = self.client().get(&url).send().await?;
         let data = Self::check_response(resp).await?.json().await?;
@@ -157,14 +171,22 @@ impl MihomoClient {
     }
 
     pub async fn update_proxy_provider(&self, name: &str) -> ApiResult<()> {
-        let url = format!("{}/providers/proxies/{}", self.base_url(), encode_path(name));
+        let url = format!(
+            "{}/providers/proxies/{}",
+            self.base_url(),
+            encode_path(name)
+        );
         let resp = self.client().put(&url).send().await?;
         Self::check_response(resp).await?;
         Ok(())
     }
 
     pub async fn healthcheck_proxy_provider(&self, name: &str) -> ApiResult<()> {
-        let url = format!("{}/providers/proxies/{}/healthcheck", self.base_url(), encode_path(name));
+        let url = format!(
+            "{}/providers/proxies/{}/healthcheck",
+            self.base_url(),
+            encode_path(name)
+        );
         let resp = self.client().get(&url).send().await?;
         Self::check_response(resp).await?;
         Ok(())
@@ -232,7 +254,12 @@ impl MihomoClient {
     // --- DNS ---
 
     pub async fn dns_query(&self, name: &str, record_type: &str) -> ApiResult<DnsQueryResponse> {
-        let url = format!("{}/dns/query?name={}&type={}", self.base_url(), encode_path(name), record_type);
+        let url = format!(
+            "{}/dns/query?name={}&type={}",
+            self.base_url(),
+            encode_path(name),
+            record_type
+        );
         let resp = self.client().get(&url).send().await?;
         let data = Self::check_response(resp).await?.json().await?;
         Ok(data)

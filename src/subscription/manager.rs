@@ -1,11 +1,11 @@
 use crate::api::client::MihomoClient;
 use crate::config::mioctl_config::MioctlConfig;
 use crate::subscription::fetcher::{fetch_subscription, fetch_with_ua_probe};
-use crate::subscription::parser::{
-    detect_format, detect_subscription_name, name_from_url,
-    parse_base64, parse_subscription_full, parse_uri_list, SubscriptionFormat,
-};
 use crate::subscription::merger::{backup_file, merge_mihomo_config, rollback_file, write_config};
+use crate::subscription::parser::{
+    detect_format, detect_subscription_name, name_from_url, parse_base64, parse_subscription_full,
+    parse_uri_list, SubscriptionFormat,
+};
 
 pub struct SubscriptionManager;
 
@@ -28,12 +28,16 @@ impl SubscriptionManager {
         // 2. Auto-detect name
         let sub_name = match name {
             Some(n) => n,
-            None => detect_subscription_name(&content)
-                .or_else(|_| name_from_url(&url))?,
+            None => detect_subscription_name(&content).or_else(|_| name_from_url(&url))?,
         };
 
         // 3. Reject duplicate subscriptions
-        if config.subscriptions.items.iter().any(|s| s.name == sub_name) {
+        if config
+            .subscriptions
+            .items
+            .iter()
+            .any(|s| s.name == sub_name)
+        {
             return Err(format!(
                 "subscription '{}' already exists. Remove it first or use a different --name.",
                 sub_name
@@ -48,13 +52,21 @@ impl SubscriptionManager {
                 let nodes = parse_base64(&content)?;
                 let (proxies, proxy_groups, rules) =
                     nodes_to_subscription_content(&sub_name, &nodes);
-                SubscriptionContent { proxies, proxy_groups, rules }
+                SubscriptionContent {
+                    proxies,
+                    proxy_groups,
+                    rules,
+                }
             }
             SubscriptionFormat::PlainUri => {
                 let nodes = parse_uri_list(&content)?;
                 let (proxies, proxy_groups, rules) =
                     nodes_to_subscription_content(&sub_name, &nodes);
-                SubscriptionContent { proxies, proxy_groups, rules }
+                SubscriptionContent {
+                    proxies,
+                    proxy_groups,
+                    rules,
+                }
             }
         };
 
@@ -62,12 +74,8 @@ impl SubscriptionManager {
         let config_path = config.mihomo.config_path.clone();
         backup_file(&config_path)?;
 
-        let result = merge_mihomo_config(
-            &config_path,
-            &sub.proxies,
-            &sub.proxy_groups,
-            &sub.rules,
-        )?;
+        let result =
+            merge_mihomo_config(&config_path, &sub.proxies, &sub.proxy_groups, &sub.rules)?;
 
         write_config(&config_path, &result.yaml)?;
 
@@ -133,8 +141,11 @@ impl SubscriptionManager {
         for item in &items {
             match Self::update_one(item.name.clone(), &item.url, client).await {
                 Ok(count) => {
-                    if let Some(s) =
-                        config.subscriptions.items.iter_mut().find(|s| s.name == item.name)
+                    if let Some(s) = config
+                        .subscriptions
+                        .items
+                        .iter_mut()
+                        .find(|s| s.name == item.name)
                     {
                         s.last_updated = Some(now.clone());
                     }
@@ -176,15 +187,27 @@ fn nodes_to_subscription_content(
     name: &str,
     nodes: &[crate::api::types::ParsedNode],
 ) -> (serde_yaml::Value, serde_yaml::Value, serde_yaml::Value) {
-    use serde_yaml::{Value, Mapping};
+    use serde_yaml::{Mapping, Value};
 
     let mut proxy_entries = Vec::new();
     for node in nodes {
         let mut entry = Mapping::new();
-        entry.insert(Value::String("name".into()), Value::String(node.name.clone()));
-        entry.insert(Value::String("type".into()), Value::String(node.node_type.clone()));
-        entry.insert(Value::String("server".into()), Value::String(node.server.clone()));
-        entry.insert(Value::String("port".into()), Value::Number(node.port.into()));
+        entry.insert(
+            Value::String("name".into()),
+            Value::String(node.name.clone()),
+        );
+        entry.insert(
+            Value::String("type".into()),
+            Value::String(node.node_type.clone()),
+        );
+        entry.insert(
+            Value::String("server".into()),
+            Value::String(node.server.clone()),
+        );
+        entry.insert(
+            Value::String("port".into()),
+            Value::Number(node.port.into()),
+        );
         if let Some(ref c) = node.cipher {
             entry.insert(Value::String("cipher".into()), Value::String(c.clone()));
         }
@@ -221,14 +244,19 @@ fn nodes_to_subscription_content(
     let proxies = Value::Sequence(proxy_entries);
 
     let mut group = Mapping::new();
-    group.insert(Value::String("name".into()), Value::String(name.to_string()));
-    group.insert(Value::String("type".into()), Value::String("select".to_string()));
-    let node_names: Vec<Value> =
-        nodes.iter().map(|n| Value::String(n.name.clone())).collect();
     group.insert(
-        Value::String("proxies".into()),
-        Value::Sequence(node_names),
+        Value::String("name".into()),
+        Value::String(name.to_string()),
     );
+    group.insert(
+        Value::String("type".into()),
+        Value::String("select".to_string()),
+    );
+    let node_names: Vec<Value> = nodes
+        .iter()
+        .map(|n| Value::String(n.name.clone()))
+        .collect();
+    group.insert(Value::String("proxies".into()), Value::Sequence(node_names));
     let proxy_groups = Value::Sequence(vec![Value::Mapping(group)]);
 
     let rules = Value::Sequence(vec![Value::String(format!("MATCH,{}", name))]);

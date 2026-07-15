@@ -1,6 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
+# Parse arguments
+INSTALL_SYSTEM=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --system) INSTALL_SYSTEM=true ;;
+  esac
+  shift
+done
+
 GREEN='\033[32m'
 YELLOW='\033[33m'
 RED='\033[31m'
@@ -234,7 +243,7 @@ chmod +x "$MIHOMO_BIN_DIR/mihomo"
 # Grant CAP_NET_ADMIN so mihomo can create TUN devices without root.
 # This is required for TUN mode to work.
 if command -v setcap >/dev/null 2>&1; then
-  sudo setcap cap_net_admin+ep "$MIHOMO_BIN_DIR/mihomo" 2>/dev/null && \
+  sudo setcap cap_net_admin,cap_net_raw,cap_net_bind_service=+eip "$MIHOMO_BIN_DIR/mihomo" 2>/dev/null && \
     ok "CAP_NET_ADMIN granted for TUN mode" || \
     warn "setcap failed — TUN mode may not work without CAP_NET_ADMIN"
 else
@@ -242,6 +251,23 @@ else
   warn "  sudo setcap cap_net_admin+ep $MIHOMO_BIN_DIR/mihomo"
 fi
 ok "mihomo $MIHOMO_VERSION → $MIHOMO_BIN_DIR/mihomo"
+
+# ---- download geodata files ----
+echo ""
+echo "${BOLD}Downloading geodata files...${NC}"
+
+GEO_SITE_DAT_URL="https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geosite.dat"
+GEO_IP_MMDB_URL="https://github.com/MetaCubeX/meta-rules-dat/releases/latest/download/geoip.metadb"
+
+mkdir -p "$MIHOMO_CONFIG_DIR"
+
+curl -fsSL -o "$MIHOMO_CONFIG_DIR/geosite.dat" "$GEO_SITE_DAT_URL" && \
+  ok "geosite.dat → $MIHOMO_CONFIG_DIR/geosite.dat" || \
+  warn "geosite.dat download failed (GEOSITE rules may not work)"
+
+curl -fsSL -o "$MIHOMO_CONFIG_DIR/Country.mmdb" "$GEO_IP_MMDB_URL" && \
+  ok "Country.mmdb → $MIHOMO_CONFIG_DIR/Country.mmdb" || \
+  warn "Country.mmdb download failed (GEOIP rules may not work)"
 
 # ---- create mihomo config (if not exists) ----
 if [ -f "$MIHOMO_CONFIG_FILE" ]; then
@@ -258,6 +284,10 @@ log-level: info
 dns:
   enable: true
   enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.github.com'
+    - github.com
   nameserver:
     - https://223.5.5.5/dns-query
     - https://doh.pub/dns-query
@@ -268,17 +298,91 @@ tun:
   auto-detect-interface: true
   dns-hijack:
     - any:53
+rules:
+  - DST-PORT,22,DIRECT
 YAML
   echo ""
   ok "mihomo config created at $MIHOMO_CONFIG_FILE"
 fi
 
-# ---- create systemd user service ----
-echo ""
-echo "${BOLD}Setting up mihomo systemd service...${NC}"
+if [ "$INSTALL_SYSTEM" = true ]; then
+  # System-level service: uses /etc/mihomo/ and /usr/bin/mihomo
+  echo ""
+  echo "${BOLD}Setting up mihomo systemd SYSTEM service...${NC}"
 
-mkdir -p "$SYSTEMD_USER_DIR"
-cat > "$SYSTEMD_USER_DIR/mihomo.service" <<'SYSTEMD'
+  sudo mkdir -p /etc/mihomo
+  sudo cp "$MIHOMO_BIN_DIR/mihomo" /usr/bin/mihomo
+  sudo setcap cap_net_admin,cap_net_raw,cap_net_bind_service=+eip /usr/bin/mihomo
+
+  sudo cp "$MIHOMO_CONFIG_DIR/geosite.dat" /etc/mihomo/ 2>/dev/null || true
+  sudo cp "$MIHOMO_CONFIG_DIR/Country.mmdb" /etc/mihomo/ 2>/dev/null || true
+
+  # Install start script
+  sudo mkdir -p /usr/lib/mihomo
+  sudo tee /usr/lib/mihomo/start > /dev/null << 'SYSTEMD_START'
+#!/usr/bin/bash
+install "${CREDENTIALS_DIRECTORY}/config.yaml" "${STATE_DIRECTORY}"/config.yaml
+install /etc/mihomo/geosite.dat -t "${STATE_DIRECTORY}" 2>/dev/null || true
+install /etc/mihomo/Country.mmdb -t "${STATE_DIRECTORY}" 2>/dev/null || true
+SYSTEMD_START
+  sudo chmod +x /usr/lib/mihomo/start
+
+  sudo cp "$MIHOMO_CONFIG_FILE" /etc/mihomo/config.yaml
+
+  sudo tee /etc/systemd/system/mihomo.service > /dev/null << 'SYSTEMD_UNIT'
+[Unit]
+Description=Mihomo daemon
+After=network.target NetworkManager.service systemd-networkd.service iwd.service
+
+[Service]
+Type=simple
+DynamicUser=yes
+Restart=on-failure
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+RestartSec=5
+StateDirectory=mihomo
+StateDirectoryMode=0700
+ExecStartPre=/usr/lib/mihomo/start
+ExecStart=/usr/bin/mihomo -d "$STATE_DIRECTORY"
+LoadCredential=config.yaml:/etc/mihomo/config.yaml
+ProtectSystem=strict
+RemoveIPC=yes
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+PrivateMounts=yes
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=true
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+PrivateTmp=disconnected
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+UMask=077
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD_UNIT
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable mihomo.service
+  sudo systemctl restart mihomo.service 2>/dev/null || true
+  ok "mihomo system service enabled and started"
+else
+  # ---- create systemd user service ----
+  echo ""
+  echo "${BOLD}Setting up mihomo systemd USER service...${NC}"
+
+  mkdir -p "$SYSTEMD_USER_DIR"
+  cat > "$SYSTEMD_USER_DIR/mihomo.service" <<'SYSTEMD'
 [Unit]
 Description=Mihomo Proxy Service
 After=network-online.target
@@ -295,12 +399,13 @@ LimitNOFILE=1048576
 WantedBy=default.target
 SYSTEMD
 
-# Reload systemd and enable service
-systemctl --user daemon-reload 2>/dev/null || true
-systemctl --user enable mihomo.service 2>/dev/null || true
-systemctl --user restart mihomo.service 2>/dev/null || true
+  # Reload systemd and enable service
+  systemctl --user daemon-reload 2>/dev/null || true
+  systemctl --user enable mihomo.service 2>/dev/null || true
+  systemctl --user restart mihomo.service 2>/dev/null || true
 
-ok "mihomo service enabled and started"
+  ok "mihomo user service enabled and started"
+fi
 
 # ---- create mioctl config (if not exists) ----
 echo ""
@@ -325,7 +430,11 @@ echo ""
 echo "  mioctl:  $INSTALL_DIR/mioctl${exe}"
 echo "  mihomo:  $MIHOMO_BIN_DIR/mihomo"
 echo "  config:  $MIOCTL_CONFIG_FILE"
+if [ "$INSTALL_SYSTEM" = true ]; then
+echo "  service: sudo systemctl status mihomo"
+else
 echo "  service: systemctl --user status mihomo"
+fi
 echo ""
 echo "${BOLD}Next steps:${NC}"
 echo "  1. Edit mihomo config if needed: $MIHOMO_CONFIG_FILE"
