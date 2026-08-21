@@ -116,7 +116,7 @@ impl MihomoClient {
         group: &str,
         test_url: &str,
         timeout_ms: u64,
-    ) -> ApiResult<Vec<DelayResponse>> {
+    ) -> ApiResult<std::collections::HashMap<String, i64>> {
         let url = format!(
             "{}/group/{}/delay?url={}&timeout={}",
             self.base_url(),

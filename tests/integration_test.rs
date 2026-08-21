@@ -144,6 +144,62 @@ async fn test_reload_config() {
 }
 
 #[tokio::test]
+async fn test_proxy_delay() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/proxies/NodeA/delay"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"delay": 150})))
+        .mount(&server)
+        .await;
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let r = client
+        .test_proxy_delay("NodeA", "https://www.gstatic.com/generate_204", 5000)
+        .await
+        .unwrap();
+    assert_eq!(r.delay, 150);
+}
+
+#[tokio::test]
+async fn test_group_delay_returns_node_map() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/group/MyGroup/delay"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"NodeA": 100, "NodeB": 200})),
+        )
+        .mount(&server)
+        .await;
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let r = client
+        .test_group_delay("MyGroup", "https://www.gstatic.com/generate_204", 5000)
+        .await
+        .unwrap();
+    assert_eq!(r.len(), 2);
+    assert_eq!(r.get("NodeA"), Some(&100));
+    assert_eq!(r.get("NodeB"), Some(&200));
+}
+
+#[tokio::test]
+async fn test_group_delay_zero_delay_roundtrip() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/group/MyGroup/delay"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"NodeA": 0, "NodeB": 77})),
+        )
+        .mount(&server)
+        .await;
+    let client = MihomoClient::new(&server.uri(), None).unwrap();
+    let r = client
+        .test_group_delay("MyGroup", "https://www.gstatic.com/generate_204", 5000)
+        .await
+        .unwrap();
+    assert_eq!(r.get("NodeA"), Some(&0));
+    assert_eq!(r.get("NodeB"), Some(&77));
+}
+
+#[tokio::test]
 async fn test_api_error_handling() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

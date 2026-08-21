@@ -1,3 +1,4 @@
+use crate::api::types::Proxy;
 use crate::app::state::AppState;
 use crate::ui::theme::CATPPUCCIN_MOCHA as T;
 use crate::ui::util::readable_name;
@@ -8,6 +9,25 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table, TableState},
     Frame,
 };
+
+/// Format a delay value for display. `0` means the delay test timed out
+/// (clash semantics), negative values mean the test errored.
+pub fn format_delay(delay: i64) -> String {
+    match delay {
+        d if d > 0 => format!("{}ms", d),
+        0 => "timeout".into(),
+        _ => "error".into(),
+    }
+}
+
+/// Delay column text for a proxy: latest history entry, or `-` when no
+/// history exists yet.
+pub fn display_delay(proxy: Option<&Proxy>) -> String {
+    proxy
+        .and_then(|p| p.history.last())
+        .map(|h| format_delay(h.delay))
+        .unwrap_or_else(|| "-".into())
+}
 
 pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut TableState) {
     let chunks = Layout::default()
@@ -82,9 +102,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
         .map(|(orig_idx, name)| {
             let proxy = state.proxies.proxies.get(*name);
             let ptype = proxy.map(|p| p.proxy_type.as_str()).unwrap_or("?");
-            let delay = proxy
-                .and_then(|p| p.history.last().map(|h| format!("{}ms", h.delay)))
-                .unwrap_or_else(|| "-".into());
+            let delay = display_delay(proxy);
             let prefix = if *name == selected_name { "* " } else { "  " };
             let is_match = !search_query.is_empty() && name.to_lowercase().contains(&search_query);
             let style = if *orig_idx == state.ui.selected_node_idx {
@@ -134,4 +152,68 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState, table_state: &mut Tab
     table_state.select(visible_idx);
 
     f.render_stateful_widget(table, chunks[1], table_state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_delay, format_delay};
+    use crate::api::types::{Proxy, ProxyHistory};
+
+    #[test]
+    fn test_format_delay_normal() {
+        assert_eq!(format_delay(150), "150ms");
+        assert_eq!(format_delay(1), "1ms");
+    }
+
+    #[test]
+    fn test_format_delay_zero_is_timeout() {
+        assert_eq!(format_delay(0), "timeout");
+    }
+
+    #[test]
+    fn test_format_delay_negative_is_error() {
+        assert_eq!(format_delay(-1), "error");
+        assert_eq!(format_delay(-500), "error");
+    }
+
+    fn proxy_with_history(delays: &[i64]) -> Proxy {
+        Proxy {
+            name: "NodeA".into(),
+            proxy_type: "Shadowsocks".into(),
+            now: None,
+            all: Vec::new(),
+            history: delays
+                .iter()
+                .map(|d| ProxyHistory {
+                    time: "t".into(),
+                    delay: *d,
+                })
+                .collect(),
+            udp: true,
+            alive: true,
+        }
+    }
+
+    #[test]
+    fn test_display_delay_empty_history_is_dash() {
+        let p = proxy_with_history(&[]);
+        assert_eq!(display_delay(Some(&p)), "-");
+    }
+
+    #[test]
+    fn test_display_delay_none_is_dash() {
+        assert_eq!(display_delay(None), "-");
+    }
+
+    #[test]
+    fn test_display_delay_uses_latest_history_entry() {
+        let p = proxy_with_history(&[100, 250]);
+        assert_eq!(display_delay(Some(&p)), "250ms");
+    }
+
+    #[test]
+    fn test_display_delay_zero_latest_is_timeout() {
+        let p = proxy_with_history(&[100, 0]);
+        assert_eq!(display_delay(Some(&p)), "timeout");
+    }
 }

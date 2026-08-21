@@ -31,7 +31,7 @@ impl ProxyManager {
         group: &str,
         test_url: &str,
         timeout_ms: u64,
-    ) -> ApiResult<Vec<DelayResponse>> {
+    ) -> ApiResult<std::collections::HashMap<String, i64>> {
         client.test_group_delay(group, test_url, timeout_ms).await
     }
 
@@ -146,5 +146,43 @@ mod tests {
             };
             assert_eq!(mode, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn test_node_delay_forwards_to_client() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/proxies/NodeA/delay"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"delay": 88})),
+            )
+            .mount(&server)
+            .await;
+        let client = MihomoClient::new(&server.uri(), None).unwrap();
+        let r = ProxyManager::test_node_delay(&client, "NodeA", "https://x", 5000)
+            .await
+            .unwrap();
+        assert_eq!(r.delay, 88);
+    }
+
+    #[tokio::test]
+    async fn test_group_delay_forwards_to_client() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/group/MyGroup/delay"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"NodeA": 100, "NodeB": 200})),
+            )
+            .mount(&server)
+            .await;
+        let client = MihomoClient::new(&server.uri(), None).unwrap();
+        let r = ProxyManager::test_group_delay(&client, "MyGroup", "https://x", 5000)
+            .await
+            .unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r.get("NodeA"), Some(&100));
+        assert_eq!(r.get("NodeB"), Some(&200));
     }
 }

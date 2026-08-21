@@ -10,6 +10,7 @@ use ratatui::{
     Terminal,
 };
 
+use crate::api::types::{Proxy, ProxyHistory};
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
 use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState, LOG_CAP};
@@ -20,6 +21,7 @@ use crate::ui::views::{
     connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar,
 };
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
+use std::collections::HashMap;
 
 /// Collect payload text from the selected log range, joined by newlines.
 fn collect_log_selection(state: &AppState) -> String {
@@ -655,7 +657,11 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     match ProxyManager::test_node_delay(&c, &n, &url, timeout).await {
-                        Ok(_) => {
+                        Ok(result) => {
+                            {
+                                let mut s = shared2.lock().await;
+                                apply_node_delay(&mut s, &n, result.delay);
+                            }
                             refresh_state(&shared2).await;
                             let mut s = shared2.lock().await;
                             s.add_log("info", &format!("Delay: {} tested", n));
@@ -680,7 +686,11 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     match ProxyManager::test_group_delay(&c, &g, &url, timeout).await {
-                        Ok(_) => {
+                        Ok(results) => {
+                            {
+                                let mut s = shared2.lock().await;
+                                apply_group_delays(&mut s, &results);
+                            }
                             refresh_state(&shared2).await;
                             let mut s = shared2.lock().await;
                             s.add_log("info", "Group delay test done");
@@ -864,6 +874,35 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
     true
 }
 
+/// Maximum history entries kept per proxy after a delay-test write-back.
+const MAX_DELAY_HISTORY: usize = 10;
+
+/// Push a delay measurement into a proxy's history (most recent last),
+/// trimming to [`MAX_DELAY_HISTORY`] entries. Missing proxies are ignored.
+fn record_delay(proxy: Option<&mut Proxy>, delay: i64) {
+    if let Some(p) = proxy {
+        p.history.push(ProxyHistory {
+            time: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, false),
+            delay,
+        });
+        while p.history.len() > MAX_DELAY_HISTORY {
+            p.history.remove(0);
+        }
+    }
+}
+
+/// Write a single-node delay test result into `state.proxies`.
+fn apply_node_delay(state: &mut AppState, node: &str, delay: i64) {
+    record_delay(state.proxies.proxies.get_mut(node), delay);
+}
+
+/// Write a group delay test result (node -> delay) into `state.proxies`.
+fn apply_group_delays(state: &mut AppState, results: &HashMap<String, i64>) {
+    for (node, delay) in results {
+        record_delay(state.proxies.proxies.get_mut(node), *delay);
+    }
+}
+
 /// Fetch all data from mihomo API and update shared state.
 /// Clamps UI selections to valid ranges after updating groups.
 async fn refresh_state(shared: &SharedState) {
@@ -978,5 +1017,100 @@ mod tests {
         assert!(result.contains("stack: gvisor"));
         assert!(result.contains("device: utun"));
         assert!(result.contains("auto-route: true"));
+    }
+
+    fn make_proxy(name: &str) -> Proxy {
+        Proxy {
+            name: name.into(),
+            proxy_type: "Shadowsocks".into(),
+            now: None,
+            all: Vec::new(),
+            history: Vec::new(),
+            udp: true,
+            alive: true,
+        }
+    }
+
+    #[test]
+    fn test_apply_node_delay_writes_history() {
+        let mut s = AppState::new();
+        s.proxies
+            .proxies
+            .insert("NodeA".into(), make_proxy("NodeA"));
+
+        apply_node_delay(&mut s, "NodeA", 123);
+
+        let p = s.proxies.proxies.get("NodeA").unwrap();
+        assert_eq!(p.history.len(), 1);
+        assert_eq!(p.history[0].delay, 123);
+        assert!(!p.history[0].time.is_empty());
+    }
+
+    #[test]
+    fn test_apply_node_delay_ignores_missing_proxy() {
+        let mut s = AppState::new();
+        apply_node_delay(&mut s, "Ghost", 123);
+        assert!(!s.proxies.proxies.contains_key("Ghost"));
+    }
+
+    #[test]
+    fn test_apply_group_delays_writes_all_nodes() {
+        let mut s = AppState::new();
+        s.proxies
+            .proxies
+            .insert("NodeA".into(), make_proxy("NodeA"));
+        s.proxies
+            .proxies
+            .insert("NodeB".into(), make_proxy("NodeB"));
+
+        let results = HashMap::from([("NodeA".to_string(), 100), ("NodeB".to_string(), 200)]);
+        apply_group_delays(&mut s, &results);
+
+        assert_eq!(
+            s.proxies.proxies["NodeA"].history.last().unwrap().delay,
+            100
+        );
+        assert_eq!(
+            s.proxies.proxies["NodeB"].history.last().unwrap().delay,
+            200
+        );
+    }
+
+    #[test]
+    fn test_apply_group_delays_ignores_unknown_nodes() {
+        let mut s = AppState::new();
+        s.proxies
+            .proxies
+            .insert("NodeA".into(), make_proxy("NodeA"));
+
+        let results = HashMap::from([("NodeA".to_string(), 100), ("Ghost".to_string(), 999)]);
+        apply_group_delays(&mut s, &results);
+
+        assert_eq!(
+            s.proxies.proxies["NodeA"].history.last().unwrap().delay,
+            100
+        );
+        assert!(!s.proxies.proxies.contains_key("Ghost"));
+    }
+
+    #[test]
+    fn test_record_delay_trims_history() {
+        let mut p = make_proxy("NodeA");
+        for i in 0..(MAX_DELAY_HISTORY + 5) {
+            p.history.push(ProxyHistory {
+                time: i.to_string(),
+                delay: i as i64,
+            });
+        }
+        record_delay(Some(&mut p), 999);
+
+        assert_eq!(p.history.len(), MAX_DELAY_HISTORY);
+        assert_eq!(p.history.last().unwrap().delay, 999);
+        assert_eq!(p.history.first().unwrap().delay, 6);
+    }
+
+    #[test]
+    fn test_record_delay_none_is_noop() {
+        record_delay(None, 42);
     }
 }
