@@ -27,11 +27,11 @@ curl -fsSL https://raw.githubusercontent.com/exponentxqq/mioctl/main/install.sh 
 
 ## 功能特性
 
-- **交互式 TUI** — 侧边栏导航，5 个视图（概览、代理、连接、规则、日志）
+- **交互式 TUI** — 侧边栏导航，6 个视图（概览、代理、连接、规则、日志、订阅）
 - **完整 API 封装** — 所有 mihomo REST 端点，WebSocket 实时数据流，Braille 旋转加载提示
 - **TUN & 系统代理** — Dashboard 显示 TUN / 系统代理 / 端口状态，`p` 键一键切换，两者互斥
 - **系统代理守护** — 启用后每 30 秒自动重设代理（gsettings + proxy.env），防止被清除
-- **订阅管理** — URL 添加/更新/删除，自动识别格式并注入 proxy-provider
+- **订阅管理** — URL 添加/更新/切换/删除，订阅归档为 `~/.config/mioctl/profiles/*.yaml`，激活时将 proxies/proxy-groups/rules 三段原样合入 mihomo 配置（其余顶层键保留，不注入 proxy-provider）
 - **代理控制** — 策略组浏览、节点切换、延迟测试、模式切换
 - **日志视图** — 实时日志流、级别过滤、暂停滚动、Vim 式选中复制（`v` 选中 + `y` 复制）
 - **跨 shell 代理** — 同时配置 GNOME 系统代理（浏览器）和 proxy.env（终端），支持 `~/.zshenv` 自动加载
@@ -61,21 +61,19 @@ mioctl tui
 
 ### 4. 管理订阅
 
-在 `~/.config/mioctl/config.toml` 中配置订阅：
-
-```toml
-[subscriptions]
-update-interval-minutes = 240
-
-[[subscriptions.items]]
-name = "我的机场"
-url = "https://example.com/api/v1/client/xxxxxxxx"
-```
-
-然后更新：
+添加订阅（名称自动从订阅内容识别，也可 `--name` 指定；首个订阅自动激活）：
 
 ```bash
-mioctl sub update --all
+mioctl sub add https://example.com/api/v1/client/xxxxxxxx
+```
+
+常用操作：
+
+```bash
+mioctl sub list                  列出订阅（* 为当前）
+mioctl sub use <name>            切换当前订阅
+mioctl sub update --all          更新全部订阅
+mioctl sub remove <name>         删除订阅
 ```
 
 ## 配置文件
@@ -90,8 +88,8 @@ external-controller = "127.0.0.1:9090"
 secret = ""
 
 [subscriptions]
-# 自动更新间隔（分钟），默认 240
-update-interval-minutes = 240
+# active 标记当前激活的订阅（由 mioctl sub use 维护，可省略）
+# active = "我的机场"
 
 [[subscriptions.items]]
 name = "我的机场"
@@ -129,7 +127,7 @@ tun:
 
 | 按键                   | 功能                                  |
 | ---------------------- | ------------------------------------- |
-| `1` `2` `3` `4` `5`    | 切换视图（概览/代理/连接/规则/日志）  |
+| `1` `2` `3` `4` `5` `6` | 切换视图（概览/代理/连接/规则/日志/订阅） |
 | `j` / `k` 或 `↑` / `↓` | 上下移动                              |
 | `g`                    | 跳到顶部                              |
 | `G`                    | 跳到底部                              |
@@ -137,7 +135,7 @@ tun:
 | `n` / `N`              | 下一个 / 上一个搜索结果               |
 | `r`                    | 手动刷新数据                          |
 | `m`                    | 切换代理模式（全局 → 规则 → 直连）    |
-| `p`                    | 切换代理开关（TUN ↔ 系统代理 ↔ 关闭） |
+| `p`                    | 切换代理开关（TUN ↔ 系统代理）        |
 | `?`                    | 显示帮助                              |
 | `q`                    | 退出                                  |
 
@@ -158,6 +156,15 @@ tun:
 | `d`  | 关闭选中的连接 |
 | `D`  | 关闭全部连接   |
 
+### 订阅视图
+
+| 按键    | 功能              |
+| ------- | ----------------- |
+| `Enter` | 激活选中的订阅    |
+| `u`     | 更新选中的订阅    |
+| `a`     | 输入 URL 添加订阅 |
+| `d`     | 删除选中的订阅    |
+
 ### 日志视图
 
 | 按键    | 功能                                                      |
@@ -173,7 +180,7 @@ tun:
 
 默认视图。第一行显示代理模式、上下行速率、连接数；第二行显示 TUN 状态、系统代理状态、混合端口、LAN 开放状态；下方为流量趋势图、策略组表格（显示每个组的当前活跃节点）、内存和版本信息。
 
-按 `p` 可一键切换代理状态：**TUN ↔ 系统代理 ↔ 全部关闭**，TUN 和系统代理永远二选一。
+按 `p` 可在 **TUN ↔ 系统代理** 之间一键切换，TUN 和系统代理永远二选一。
 
 ### 🔗 代理
 
@@ -190,6 +197,10 @@ tun:
 ### 📜 日志
 
 实时滚动日志流，按日志级别着色（info=绿、warning=黄、error=红、debug=灰）。支持暂停、级别过滤和 Vim 式文本选中复制（`v` 进入选中模式，`j`/`k` 扩展选区，`y` 复制到剪贴板）。
+
+### 📁 订阅
+
+订阅列表（`*` 为当前激活）。`Enter` 激活、`u` 更新、`a` 添加、`d` 删除。激活即将订阅的 proxies/proxy-groups/rules 三段合入 mihomo 配置并 reload。
 
 ## 系统代理
 
@@ -221,22 +232,30 @@ mioctl 自动检测并解析以下订阅格式：
 
 支持的节点协议：Shadowsocks (`ss://`)、Vmess (`vmess://`)、Trojan (`trojan://`)
 
+> Note: subscription fetch accepts self-signed TLS certificates (required by some airport panels); node credentials in transit rely on the server's TLS config.
+
 ## 命令行
 
 ```
-mioctl tui              启动交互式 TUI
-mioctl connect test     测试 API 连接
-mioctl sub update --all 更新全部订阅
+mioctl tui               启动交互式 TUI
+mioctl connect test      测试 API 连接
+mioctl doctor            诊断 mihomo 环境
+mioctl sub add <url>     添加订阅（--name 指定名称，--activate 立即激活）
+mioctl sub register <url> 注册订阅（add 的别名，不激活）
+mioctl sub use <name>    切换当前订阅
+mioctl sub update --all  更新全部订阅
+mioctl sub remove <name> 删除订阅（--yes 跳过确认）
+mioctl sub list          列出订阅（* 为当前）
 ```
 
 ## 项目结构
 
 ```
 ~/.config/mioctl/
-├── config.toml           # mioctl 配置
+├── config.toml           # mioctl 配置（[subscriptions].active 标记当前订阅）
 ├── bin/mihomo            # mihomo 二进制（由 install.sh 安装）
 ├── proxy.env             # 终端代理环境变量
-└── providers/            # 生成的 proxy-provider 文件
+└── profiles/             # 订阅归档（每个订阅一个 *.yaml，由 sub add/update 生成）
     └── my-sub.yaml
 
 ~/.config/mihomo/
@@ -258,7 +277,7 @@ A: 确认 mihomo 已运行且 `external-controller` 配置正确。`systemctl --
 A: 检查订阅 URL 是否可访问。部分订阅需要特定 User-Agent（mioctl 使用 `clash-verge/1.3.8`），或服务器使用自签名证书（mioctl 已支持）。
 
 **Q: 如何添加新的订阅？**
-A: 在 `~/.config/mioctl/config.toml` 的 `[[subscriptions.items]]` 段中添加 name 和 url，然后运行 `mioctl sub update --all`。
+A: 运行 `mioctl sub add <url>`（TUI 订阅视图按 `a` 也可）。手动编辑 `[[subscriptions.items]]` 仍可行，但订阅的 proxies/proxy-groups/rules 三段由 mioctl 管理，下次更新/激活时会被覆盖。
 
 **Q: 按 `p` 切换 TUN 没有反应？**
 A: 确认 mihomo 配置中包含 `tun` 段，且 mihomo 二进制已设置 `CAP_NET_ADMIN` 权限：`sudo setcap cap_net_admin+ep $(which mihomo)`。

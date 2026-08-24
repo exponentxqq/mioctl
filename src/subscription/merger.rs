@@ -94,17 +94,25 @@ pub fn merge_mihomo_config(
     config.insert(Value::String("proxy-groups".into()), proxy_groups.clone());
     config.insert(Value::String("rules".into()), rules.clone());
 
-    // Re-build mapping in preferred key order: infrastructure first, then proxies/groups/rules
     let mut ordered = Mapping::new();
     for &key in PRESERVE_KEYS {
         if let Some(v) = config.remove(key) {
             ordered.insert(Value::String(key.into()), v);
         }
     }
+    let mut managed: Vec<(Value, Value)> = Vec::new();
     for key in &["proxies", "proxy-groups", "rules"] {
         if let Some(v) = config.remove(*key) {
-            ordered.insert(Value::String(key.to_string()), v);
+            managed.push((Value::String(key.to_string()), v));
         }
+    }
+    let rest: Vec<(Value, Value)> = config.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in rest {
+        config.remove(&k);
+        ordered.insert(k, v);
+    }
+    for (k, v) in managed {
+        ordered.insert(k, v);
     }
 
     let yaml = serde_yaml::to_string(&Value::Mapping(ordered))
@@ -145,11 +153,17 @@ pub fn rollback_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn discard_backup(path: &str) {
+    let _ = std::fs::remove_file(format!("{}.bak", path));
+}
+
 pub fn write_config(path: &str, yaml: &str) -> Result<(), String> {
     if let Some(parent) = std::path::Path::new(path).parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, yaml).map_err(|e| e.to_string())
+    let tmp = format!("{}.tmp", path);
+    std::fs::write(&tmp, yaml).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -190,6 +204,86 @@ dns:
     }
 
     #[test]
+    fn test_merge_preserves_unknown_top_level_keys() {
+        let existing = r#"mixed-port: 7897
+secret: "abc"
+external-ui: ./ui
+rule-providers:
+  rp:
+    type: http
+    url: https://example.com/rp.yaml
+my-custom-key: 42
+proxy-providers:
+  pp:
+    type: http
+    url: https://example.com/pp.yaml
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, existing).unwrap();
+
+        let full: Value = serde_yaml::from_str(
+            "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 443\nproxy-groups:\n  - name: G\n    type: select\n    proxies: [N1]\nrules:\n  - MATCH,G",
+        )
+        .unwrap();
+
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            full.get("proxies").unwrap(),
+            full.get("proxy-groups").unwrap(),
+            full.get("rules").unwrap(),
+        )
+        .unwrap();
+
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        assert_eq!(out.get("secret").and_then(|v| v.as_str()), Some("abc"));
+        assert_eq!(out.get("my-custom-key").and_then(|v| v.as_i64()), Some(42));
+        assert!(out.get("rule-providers").is_some());
+        assert!(out.get("external-ui").is_some());
+        assert!(out.get("proxy-providers").is_none());
+        assert_eq!(out.get("proxies").unwrap().as_sequence().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_merge_orders_managed_sections_last() {
+        let existing = r#"mixed-port: 7897
+rules:
+  - MATCH,DIRECT
+my-custom-key: 42
+proxies:
+  - name: OLD
+    type: ss
+    server: 1.1.1.1
+    port: 443
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, existing).unwrap();
+
+        let full: Value = serde_yaml::from_str(
+            "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 443\nproxy-groups:\n  - name: G\n    type: select\n    proxies: [N1]\nrules:\n  - MATCH,G",
+        )
+        .unwrap();
+
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            full.get("proxies").unwrap(),
+            full.get("proxy-groups").unwrap(),
+            full.get("rules").unwrap(),
+        )
+        .unwrap();
+
+        let out: Mapping = serde_yaml::from_str(&result.yaml).unwrap();
+        let keys: Vec<&str> = out.keys().filter_map(|k| k.as_str()).collect();
+        assert_eq!(keys.first(), Some(&"mixed-port"));
+        assert!(keys.ends_with(&["proxies", "proxy-groups", "rules"]));
+        let custom = keys.iter().position(|k| *k == "my-custom-key").unwrap();
+        let proxies_pos = keys.iter().position(|k| *k == "proxies").unwrap();
+        assert!(custom < proxies_pos);
+        assert!(!result.yaml.contains("OLD"));
+    }
+
+    #[test]
     fn test_merge_with_default_template_when_no_config() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.yaml");
@@ -227,5 +321,39 @@ dns:
         let path = dir.path().join("subdir").join("config.yaml");
         write_config(path.to_str().unwrap(), "test content").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "test content");
+    }
+
+    #[test]
+    fn test_write_config_atomic_no_tmp_left() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        write_config(path.to_str().unwrap(), "content").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "content");
+        assert!(!dir.path().join("config.yaml.tmp").exists());
+    }
+
+    #[test]
+    fn test_write_config_replaces_existing_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "old").unwrap();
+        write_config(path.to_str().unwrap(), "new content").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new content");
+        assert!(!dir.path().join("config.yaml.tmp").exists());
+    }
+
+    #[test]
+    fn test_discard_backup_removes_bak_silently() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "content").unwrap();
+        std::fs::write(dir.path().join("config.yaml.bak"), "old").unwrap();
+
+        discard_backup(path.to_str().unwrap());
+
+        assert!(!dir.path().join("config.yaml.bak").exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "content");
+        discard_backup(path.to_str().unwrap());
+        assert!(!dir.path().join("config.yaml.bak").exists());
     }
 }

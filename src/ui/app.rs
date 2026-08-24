@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
@@ -13,12 +13,16 @@ use ratatui::{
 use crate::api::types::{Proxy, ProxyHistory};
 use crate::app::connection_manager::ConnectionManager;
 use crate::app::proxy_manager::ProxyManager;
-use crate::app::state::{ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState, LOG_CAP};
+use crate::app::state::{
+    ActiveView::*, AppState, LoadingKind, ProxyMode, SharedState, UiState, LOG_CAP,
+};
+use crate::config::mioctl_config::MioctlConfig;
 use crate::os;
-use crate::subscription::manager::SubscriptionManager;
+use crate::subscription::manager::{SubscriptionManager, UpdateTarget};
 use crate::ui::keybindings::{parse_key, parse_mouse, Action};
 use crate::ui::views::{
     connections, dashboard, help, logs, mode_selector, proxies, rules, settings, sidebar,
+    subscriptions,
 };
 use crate::ui::widgets::{sparkline::TrafficSpark, status_bar};
 use std::collections::HashMap;
@@ -98,7 +102,6 @@ fn start_proxy_guard(shared: SharedState, port: u16) -> tokio::task::AbortHandle
 
 /// Copy text to system clipboard via xclip (X11) or wl-copy (Wayland).
 fn copy_to_clipboard(text: &str) -> bool {
-    use std::io::Write;
     use std::process::{Command, Stdio};
 
     let (cmd, args) = if std::env::var("WAYLAND_DISPLAY").is_ok() {
@@ -211,6 +214,8 @@ pub async fn run_tui() -> Result<(), String> {
                 s.ui.loading = None;
             }
 
+            migrate_startup_archives(&s).await;
+
             // Start log stream — writes directly into state.logs
             let log_client = client.clone();
             let log_state = s.clone();
@@ -239,12 +244,43 @@ pub async fn run_tui() -> Result<(), String> {
     let mut proxy_table = ratatui::widgets::TableState::default();
     let mut conn_table = ratatui::widgets::TableState::default();
 
+    let result = event_loop(
+        &mut terminal,
+        &state,
+        &spark,
+        &mut proxy_table,
+        &mut conn_table,
+    )
+    .await;
+
+    init_handle.abort();
+
+    let _ = disable_raw_mode();
+    let _ = execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    );
+    let _ = terminal.show_cursor();
+    result
+}
+
+async fn event_loop(
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
+    state: &SharedState,
+    spark: &TrafficSpark,
+    proxy_table: &mut ratatui::widgets::TableState,
+    conn_table: &mut ratatui::widgets::TableState,
+) -> Result<(), String> {
     loop {
         if event::poll(Duration::from_millis(100)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Release {
                         continue;
+                    }
+                    if is_quit_interrupt(&key) {
+                        break;
                     }
                     let mut s = state.lock().await;
                     // Search mode: capture keys as search input
@@ -265,6 +301,18 @@ pub async fn run_tui() -> Result<(), String> {
                             }
                             _ => {}
                         }
+                    } else if s.ui.sub_input_mode {
+                        if let SubInputOutcome::Submitted(url) =
+                            handle_sub_input_key(&mut s.ui, key.code)
+                        {
+                            handle_sub_input_submitted(&mut s, state.clone(), url);
+                        }
+                    } else if let Some(name) = s.ui.confirm_remove.clone() {
+                        if handle_confirm_key(&mut s.ui, key.code) && s.ui.loading.is_none() {
+                            s.ui.loading = Some(LoadingKind::SwitchProfile);
+                            let cfg = s.config.clone();
+                            spawn_remove_subscription(state.clone(), cfg, name);
+                        }
                     } else if s.ui.show_mode_selector {
                         // Mode selector: capture navigation keys
                         match key.code {
@@ -275,43 +323,7 @@ pub async fn run_tui() -> Result<(), String> {
                                 s.ui.mode_selector_idx = s.ui.mode_selector_idx.saturating_sub(1);
                             }
                             KeyCode::Enter => {
-                                let idx = s.ui.mode_selector_idx;
-                                let target = match idx {
-                                    0 => ProxyMode::Rule,
-                                    1 => ProxyMode::Global,
-                                    2 => ProxyMode::Direct,
-                                    _ => ProxyMode::Rule,
-                                };
-                                s.ui.show_mode_selector = false;
-                                s.ui.loading = Some(LoadingKind::SwitchMode);
-                                let c = s.client.clone();
-                                let s2 = state.clone();
-                                tokio::spawn(async move {
-                                    if let Some(ref client) = c {
-                                        match ProxyManager::set_proxy_mode(client, &target).await {
-                                            Ok(()) => {
-                                                refresh_state(&s2).await;
-                                                let mut s = s2.lock().await;
-                                                s.add_log(
-                                                    "info",
-                                                    &format!("Mode switched to {:?}", target),
-                                                );
-                                                s.ui.loading = None;
-                                            }
-                                            Err(e) => {
-                                                let mut s = s2.lock().await;
-                                                s.add_log(
-                                                    "error",
-                                                    &format!("Failed to switch mode: {}", e),
-                                                );
-                                                s.ui.loading = None;
-                                            }
-                                        }
-                                    } else {
-                                        let mut s = s2.lock().await;
-                                        s.ui.loading = None;
-                                    }
-                                });
+                                handle_mode_selector_enter(&mut s, state.clone()).await;
                             }
                             KeyCode::Esc => {
                                 s.ui.show_mode_selector = false;
@@ -335,15 +347,16 @@ pub async fn run_tui() -> Result<(), String> {
                             KeyCode::Char('y') => {
                                 let text = collect_log_selection(&s);
                                 s.add_log("info", &format!("Visual copy: {} chars", text.len()));
-                                let copied = copy_to_clipboard(&text);
                                 s.ui.log_visual = false;
+                                drop(s);
+                                let copied = copy_to_clipboard(&text);
                                 if !copied {
+                                    let mut s = state.lock().await;
                                     s.add_log(
                                         "error",
                                         "xclip failed — is xclip installed? (pacman -S xclip)",
                                     );
                                 }
-                                drop(s);
                                 continue;
                             }
                             KeyCode::Esc => {
@@ -360,11 +373,7 @@ pub async fn run_tui() -> Result<(), String> {
                 Event::Mouse(mouse) => {
                     if let Some(action) = parse_mouse(mouse) {
                         let mut s = state.lock().await;
-                        if s.ui.show_help || s.ui.show_settings || s.ui.show_mode_selector {
-                            s.ui.show_help = false;
-                            s.ui.show_settings = false;
-                            s.ui.show_mode_selector = false;
-                        } else {
+                        if !dismiss_popups_on_mouse(&mut s.ui) {
                             handle_action(&action, &mut s, state.clone()).await;
                         }
                     }
@@ -383,21 +392,9 @@ pub async fn run_tui() -> Result<(), String> {
 
         let s = state.lock().await;
         terminal
-            .draw(|f| render_frame(f, &s, &spark, &mut proxy_table, &mut conn_table))
+            .draw(|f| render_frame(f, &s, spark, proxy_table, conn_table))
             .map_err(|e| e.to_string())?;
     }
-
-    // Abort background tasks so shutdown is instant
-    init_handle.abort();
-
-    // Fault-tolerant cleanup — attempt all steps even if some fail
-    let _ = disable_raw_mode();
-    let _ = execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    );
-    let _ = terminal.show_cursor();
     Ok(())
 }
 
@@ -424,6 +421,7 @@ fn render_frame(
         Connections => connections::render(f, content[0], state, conn_table),
         Rules => rules::render(f, content[0], state),
         Logs => logs::render(f, content[0], state),
+        Subscriptions => subscriptions::render(f, content[0], state),
     }
     status_bar::render(f, content[1], state);
 
@@ -443,12 +441,212 @@ fn render_frame(
     }
 }
 
+enum SubInputOutcome {
+    Canceled,
+    Submitted(String),
+    Editing,
+}
+
+fn handle_sub_input_key(ui: &mut UiState, code: KeyCode) -> SubInputOutcome {
+    match code {
+        KeyCode::Esc => {
+            ui.sub_input_mode = false;
+            ui.sub_input.clear();
+            SubInputOutcome::Canceled
+        }
+        KeyCode::Enter => {
+            let url = std::mem::take(&mut ui.sub_input);
+            ui.sub_input_mode = false;
+            if url.is_empty() {
+                SubInputOutcome::Canceled
+            } else {
+                SubInputOutcome::Submitted(url)
+            }
+        }
+        KeyCode::Backspace => {
+            ui.sub_input.pop();
+            SubInputOutcome::Editing
+        }
+        KeyCode::Char(c) => {
+            ui.sub_input.push(c);
+            SubInputOutcome::Editing
+        }
+        _ => SubInputOutcome::Editing,
+    }
+}
+
+fn handle_sub_input_submitted(s: &mut AppState, shared: SharedState, url: String) {
+    if s.ui.loading.is_none() {
+        s.ui.loading = Some(LoadingKind::AddSub);
+        let cfg = s.config.clone();
+        spawn_add_subscription(shared, cfg, url);
+    }
+}
+
+async fn handle_mode_selector_enter(s: &mut AppState, shared: SharedState) {
+    let idx = s.ui.mode_selector_idx;
+    let target = match idx {
+        0 => ProxyMode::Rule,
+        1 => ProxyMode::Global,
+        2 => ProxyMode::Direct,
+        _ => ProxyMode::Rule,
+    };
+    s.ui.show_mode_selector = false;
+    if s.ui.loading.is_some() {
+        return;
+    }
+    s.ui.loading = Some(LoadingKind::SwitchMode);
+    let c = s.client.clone();
+    let s2 = shared.clone();
+    tokio::spawn(async move {
+        if let Some(ref client) = c {
+            match ProxyManager::set_proxy_mode(client, &target).await {
+                Ok(()) => {
+                    refresh_state(&s2).await;
+                    let mut s = s2.lock().await;
+                    s.add_log("info", &format!("Mode switched to {:?}", target));
+                    s.ui.loading = None;
+                }
+                Err(e) => {
+                    let mut s = s2.lock().await;
+                    s.add_log("error", &format!("Failed to switch mode: {}", e));
+                    s.ui.loading = None;
+                }
+            }
+        } else {
+            let mut s = s2.lock().await;
+            s.ui.loading = None;
+        }
+    });
+}
+
+fn handle_confirm_key(ui: &mut UiState, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            ui.confirm_remove = None;
+            true
+        }
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('n') | KeyCode::Char('N') => {
+            ui.confirm_remove = None;
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Close any open popup/modal on a mouse click and swallow the event.
+/// Returns true when a popup was open (and thus dismissed).
+fn dismiss_popups_on_mouse(ui: &mut UiState) -> bool {
+    if !(ui.show_help
+        || ui.show_settings
+        || ui.show_mode_selector
+        || ui.sub_input_mode
+        || ui.confirm_remove.is_some())
+    {
+        return false;
+    }
+    ui.show_help = false;
+    ui.show_settings = false;
+    ui.show_mode_selector = false;
+    ui.sub_input_mode = false;
+    ui.sub_input.clear();
+    ui.confirm_remove = None;
+    true
+}
+
+fn spawn_add_subscription(shared: SharedState, mut cfg: MioctlConfig, url: String) {
+    tokio::spawn(async move {
+        let result = SubscriptionManager::add(&mut cfg, &url, None, false, false).await;
+        {
+            let mut st = shared.lock().await;
+            match result {
+                Ok(msg) => {
+                    st.config = cfg;
+                    st.add_log("info", &msg);
+                }
+                Err(e) => st.add_log("error", &format!("Add failed: {}", e)),
+            }
+        }
+        refresh_state(&shared).await;
+        let mut st = shared.lock().await;
+        st.ui.loading = None;
+    });
+}
+
+fn spawn_remove_subscription(shared: SharedState, mut cfg: MioctlConfig, name: String) {
+    tokio::spawn(async move {
+        let result = SubscriptionManager::remove(&mut cfg, &name).await;
+        {
+            let mut st = shared.lock().await;
+            st.config = cfg;
+            match result {
+                Ok(msg) => st.add_log("info", &msg),
+                Err(e) => st.add_log("error", &format!("Remove failed: {}", e)),
+            }
+        }
+        refresh_state(&shared).await;
+        let mut st = shared.lock().await;
+        let last_idx = st.config.subscriptions.items.len().saturating_sub(1);
+        st.ui.selected_sub_idx = st.ui.selected_sub_idx.min(last_idx);
+        st.ui.loading = None;
+    });
+}
+
+fn spawn_switch_profile(shared: SharedState, mut cfg: MioctlConfig, name: String) {
+    tokio::spawn(async move {
+        let result = SubscriptionManager::use_profile(&mut cfg, &name, false).await;
+        {
+            let mut st = shared.lock().await;
+            st.config = cfg;
+            match result {
+                Ok(msg) => st.add_log("info", &msg),
+                Err(e) => st.add_log("error", &format!("Switch failed: {}", e)),
+            }
+        }
+        refresh_state(&shared).await;
+        let mut st = shared.lock().await;
+        st.ui.loading = None;
+    });
+}
+
+fn spawn_update_subscription(shared: SharedState, mut cfg: MioctlConfig, name: String) {
+    tokio::spawn(async move {
+        let result = SubscriptionManager::update(&mut cfg, &UpdateTarget::Named(name)).await;
+        {
+            let mut st = shared.lock().await;
+            st.config = cfg;
+            match result {
+                Ok(report) => st.add_log("info", &report.lines.join("\n")),
+                Err(e) => st.add_log("error", &format!("Update failed: {}", e)),
+            }
+        }
+        refresh_state(&shared).await;
+        let mut st = shared.lock().await;
+        st.ui.loading = None;
+    });
+}
+
+async fn migrate_startup_archives(shared: &SharedState) {
+    let mut cfg = {
+        let st = shared.lock().await;
+        st.config.clone()
+    };
+    let warnings = SubscriptionManager::ensure_archived(&mut cfg).await;
+    let mut st = shared.lock().await;
+    st.config = cfg;
+    for w in warnings {
+        st.add_log("info", &w);
+    }
+}
+
 async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -> bool {
     let client = s.client.clone();
     match action {
         Action::Quit => return false,
         Action::Refresh => {
-            s.ui.loading = Some(LoadingKind::Refresh);
+            if s.ui.loading.is_none() {
+                s.ui.loading = Some(LoadingKind::Refresh);
+            }
             let c = s.client.clone();
             let shared2 = shared.clone();
             tokio::spawn(async move {
@@ -471,6 +669,7 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                 2 => Connections,
                 3 => Rules,
                 4 => Logs,
+                5 => Subscriptions,
                 _ => return true,
             };
             s.ui.active_view = v;
@@ -498,6 +697,10 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                     s.ui.log_cursor = (s.ui.log_cursor + 1).min(m);
                 }
             }
+            Subscriptions => {
+                s.ui.selected_sub_idx = (s.ui.selected_sub_idx + 1)
+                    .min(s.config.subscriptions.items.len().saturating_sub(1));
+            }
             _ => {}
         },
         Action::MoveUp => match s.ui.active_view {
@@ -510,6 +713,9 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                 } else {
                     s.ui.log_cursor = s.ui.log_cursor.saturating_sub(1);
                 }
+            }
+            Subscriptions => {
+                s.ui.selected_sub_idx = s.ui.selected_sub_idx.saturating_sub(1);
             }
             _ => {}
         },
@@ -622,12 +828,30 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
             }
         }
         Action::SwitchNode => {
+            if s.ui.active_view == Subscriptions {
+                let name = s
+                    .config
+                    .subscriptions
+                    .items
+                    .get(s.ui.selected_sub_idx)
+                    .map(|i| i.name.clone());
+                if let Some(name) = name {
+                    if s.ui.loading.is_none() {
+                        s.ui.loading = Some(LoadingKind::SwitchProfile);
+                        let cfg = s.config.clone();
+                        spawn_switch_profile(shared.clone(), cfg, name);
+                    }
+                }
+                return true;
+            }
             let i = s.ui.selected_group_idx;
             let j = s.ui.selected_node_idx;
             let group_name = s.groups.get(i).map(|g| g.name.clone());
             let node_name = s.groups.get(i).and_then(|g| g.all.get(j).cloned());
             if let (Some(c), Some(gn), Some(nn)) = (client, group_name, node_name) {
-                s.ui.loading = Some(LoadingKind::SwitchNode);
+                if s.ui.loading.is_none() {
+                    s.ui.loading = Some(LoadingKind::SwitchNode);
+                }
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     match ProxyManager::switch_node(&c, &gn, &nn).await {
@@ -653,7 +877,9 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(n)) = (client, node) {
-                s.ui.loading = Some(LoadingKind::TestNodeDelay);
+                if s.ui.loading.is_none() {
+                    s.ui.loading = Some(LoadingKind::TestNodeDelay);
+                }
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     match ProxyManager::test_node_delay(&c, &n, &url, timeout).await {
@@ -682,7 +908,9 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
             let url = s.config.preferences.delay_test_url.clone();
             let timeout = s.config.preferences.delay_test_timeout_ms;
             if let (Some(c), Some(g)) = (client, group) {
-                s.ui.loading = Some(LoadingKind::TestGroupDelay);
+                if s.ui.loading.is_none() {
+                    s.ui.loading = Some(LoadingKind::TestGroupDelay);
+                }
                 let shared2 = shared.clone();
                 tokio::spawn(async move {
                     match ProxyManager::test_group_delay(&c, &g, &url, timeout).await {
@@ -715,6 +943,12 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
             s.ui.selected_node_idx = 0;
         }
         Action::CloseConnection => {
+            if s.ui.active_view == Subscriptions {
+                if let Some(item) = s.config.subscriptions.items.get(s.ui.selected_sub_idx) {
+                    s.ui.confirm_remove = Some(item.name.clone());
+                }
+                return true;
+            }
             let idx = s.ui.selected_conn_idx;
             let id = s.connections.get(idx).map(|c| c.id.clone());
             if let (Some(c), Some(id)) = (client, id) {
@@ -760,25 +994,26 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
                 s.ui.show_mode_selector = false;
             }
         }
-        Action::UpdateSubs => {
-            s.ui.loading = Some(LoadingKind::UpdateSubs);
-            let mut cfg = s.config.clone();
-            let c = s.client.clone();
-            let shared2 = shared.clone();
-            tokio::spawn(async move {
-                let result = if let Some(ref client) = c {
-                    SubscriptionManager::update_all(&mut cfg, client).await
-                } else {
-                    Err("no client".into())
-                };
-                let mut state = shared2.lock().await;
-                state.config = cfg;
-                match result {
-                    Ok(_) => state.add_log("info", "Subscriptions updated"),
-                    Err(e) => state.add_log("error", &format!("Subscription update failed: {}", e)),
+        Action::SubUpdate => {
+            if s.ui.active_view == Subscriptions && s.ui.loading.is_none() {
+                let name = s
+                    .config
+                    .subscriptions
+                    .items
+                    .get(s.ui.selected_sub_idx)
+                    .map(|i| i.name.clone());
+                if let Some(name) = name {
+                    s.ui.loading = Some(LoadingKind::UpdateSubs);
+                    let cfg = s.config.clone();
+                    spawn_update_subscription(shared.clone(), cfg, name);
                 }
-                state.ui.loading = None;
-            });
+            }
+        }
+        Action::SubAdd => {
+            if s.ui.active_view == Subscriptions && !s.ui.sub_input_mode {
+                s.ui.sub_input_mode = true;
+                s.ui.sub_input.clear();
+            }
         }
         Action::Back => {
             if s.ui.search_mode {
@@ -838,26 +1073,28 @@ async fn handle_action(action: &Action, s: &mut AppState, shared: SharedState) -
         }
         Action::LogCopy => {
             if s.ui.active_view == Logs {
-                let (text, copied) = if s.ui.log_visual {
+                let text = if s.ui.log_visual {
                     let t = collect_log_selection(s);
-                    let ok = copy_to_clipboard(&t);
                     s.ui.log_visual = false;
-                    (t, ok)
+                    t
                 } else if let Some(entry) = s.logs.get(s.ui.log_cursor) {
-                    let t = entry.payload.clone();
-                    let ok = copy_to_clipboard(&t);
-                    (t, ok)
+                    entry.payload.clone()
                 } else {
                     return true;
                 };
-                if !copied {
-                    s.add_log(
-                        "error",
-                        "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)",
-                    );
-                } else {
-                    s.add_log("info", &format!("Copied: {} chars", text.len()));
-                }
+                let shared2 = shared.clone();
+                tokio::task::spawn_blocking(move || {
+                    let copied = copy_to_clipboard(&text);
+                    let mut st = shared2.blocking_lock();
+                    if !copied {
+                        st.add_log(
+                            "error",
+                            "Clipboard unavailable — install wl-clipboard (Wayland) or xclip (X11)",
+                        );
+                    } else {
+                        st.add_log("info", &format!("Copied: {} chars", text.len()));
+                    }
+                });
             }
         }
         Action::CycleLogLevel => {
@@ -962,11 +1199,34 @@ async fn refresh_state(shared: &SharedState) {
     s.update_time();
 }
 
+fn is_quit_interrupt(key: &crossterm::event::KeyEvent) -> bool {
+    key.code == crossterm::event::KeyCode::Char('c')
+        && key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_is_quit_interrupt() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        assert!(is_quit_interrupt(&KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_quit_interrupt(&KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_quit_interrupt(&KeyEvent::new(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL
+        )));
+    }
 
     #[test]
     fn test_set_tun_enable() {
@@ -1112,5 +1372,730 @@ mod tests {
     #[test]
     fn test_record_delay_none_is_noop() {
         record_delay(None, 42);
+    }
+
+    #[tokio::test]
+    async fn test_switch_view_to_subscriptions() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        assert!(handle_action(&Action::SwitchView(5), &mut s, shared.clone()).await);
+        assert_eq!(s.ui.active_view, Subscriptions);
+    }
+
+    fn input_ui(buffer: &str) -> UiState {
+        UiState {
+            sub_input_mode: true,
+            sub_input: buffer.into(),
+            ..UiState::default()
+        }
+    }
+
+    fn confirm_ui() -> UiState {
+        UiState {
+            confirm_remove: Some("sub1".into()),
+            ..UiState::default()
+        }
+    }
+
+    #[test]
+    fn test_sub_input_key_esc_cancels_and_clears() {
+        let mut ui = input_ui("https://x");
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Esc),
+            SubInputOutcome::Canceled
+        ));
+        assert!(!ui.sub_input_mode);
+        assert!(ui.sub_input.is_empty());
+    }
+
+    #[test]
+    fn test_sub_input_key_enter_submits_url() {
+        let mut ui = input_ui("https://x");
+        match handle_sub_input_key(&mut ui, KeyCode::Enter) {
+            SubInputOutcome::Submitted(url) => assert_eq!(url, "https://x"),
+            SubInputOutcome::Canceled | SubInputOutcome::Editing => {
+                panic!("expected Submitted")
+            }
+        }
+        assert!(!ui.sub_input_mode);
+        assert!(ui.sub_input.is_empty());
+    }
+
+    #[test]
+    fn test_sub_input_key_enter_empty_cancels_without_submit() {
+        let mut ui = input_ui("");
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Enter),
+            SubInputOutcome::Canceled
+        ));
+        assert!(!ui.sub_input_mode);
+    }
+
+    #[test]
+    fn test_sub_input_key_backspace_pops() {
+        let mut ui = UiState {
+            sub_input: "ab".into(),
+            ..UiState::default()
+        };
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Backspace),
+            SubInputOutcome::Editing
+        ));
+        assert_eq!(ui.sub_input, "a");
+    }
+
+    #[test]
+    fn test_sub_input_key_backspace_empty_is_noop() {
+        let mut ui = UiState::default();
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Backspace),
+            SubInputOutcome::Editing
+        ));
+        assert!(ui.sub_input.is_empty());
+    }
+
+    #[test]
+    fn test_sub_input_key_char_pushes() {
+        let mut ui = UiState::default();
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Char('x')),
+            SubInputOutcome::Editing
+        ));
+        assert!(matches!(
+            handle_sub_input_key(&mut ui, KeyCode::Char('Y')),
+            SubInputOutcome::Editing
+        ));
+        assert_eq!(ui.sub_input, "xY");
+    }
+
+    #[test]
+    fn test_sub_input_key_other_codes_ignored() {
+        let mut ui = input_ui("keep");
+        for code in [KeyCode::Left, KeyCode::Tab, KeyCode::F(1)] {
+            assert!(matches!(
+                handle_sub_input_key(&mut ui, code),
+                SubInputOutcome::Editing
+            ));
+        }
+        assert!(ui.sub_input_mode);
+        assert_eq!(ui.sub_input, "keep");
+    }
+
+    #[tokio::test]
+    async fn test_sub_input_submit_ignored_while_loading() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.sub_input_mode = true;
+        s.ui.sub_input = "https://x".into();
+        s.ui.loading = Some(LoadingKind::UpdateSubs);
+        let url = match handle_sub_input_key(&mut s.ui, KeyCode::Enter) {
+            SubInputOutcome::Submitted(url) => url,
+            SubInputOutcome::Canceled | SubInputOutcome::Editing => {
+                panic!("expected Submitted")
+            }
+        };
+        handle_sub_input_submitted(&mut s, shared.clone(), url);
+        assert!(
+            !s.ui.sub_input_mode,
+            "key must still be consumed by input handler"
+        );
+        assert_eq!(
+            s.ui.loading,
+            Some(LoadingKind::UpdateSubs),
+            "submit must not spawn while an operation is in flight"
+        );
+    }
+
+    #[test]
+    fn test_confirm_key_y_confirms() {
+        let mut ui = confirm_ui();
+        assert!(handle_confirm_key(&mut ui, KeyCode::Char('y')));
+        assert!(ui.confirm_remove.is_none());
+        ui.confirm_remove = Some("sub1".into());
+        assert!(handle_confirm_key(&mut ui, KeyCode::Char('Y')));
+        assert!(ui.confirm_remove.is_none());
+    }
+
+    #[test]
+    fn test_confirm_key_dismiss_keys() {
+        for code in [
+            KeyCode::Esc,
+            KeyCode::Enter,
+            KeyCode::Char('n'),
+            KeyCode::Char('N'),
+        ] {
+            let mut ui = confirm_ui();
+            assert!(!handle_confirm_key(&mut ui, code));
+            assert!(ui.confirm_remove.is_none());
+        }
+    }
+
+    #[test]
+    fn test_confirm_key_other_keys_ignored() {
+        let mut ui = confirm_ui();
+        assert!(!handle_confirm_key(&mut ui, KeyCode::Char('x')));
+        assert_eq!(ui.confirm_remove.as_deref(), Some("sub1"));
+        assert!(!handle_confirm_key(&mut ui, KeyCode::Backspace));
+        assert_eq!(ui.confirm_remove.as_deref(), Some("sub1"));
+    }
+
+    #[test]
+    fn test_mouse_dismiss_closes_sub_input_mode_and_clears_buffer() {
+        let mut ui = input_ui("https://x");
+        assert!(dismiss_popups_on_mouse(&mut ui));
+        assert!(!ui.sub_input_mode);
+        assert!(ui.sub_input.is_empty());
+    }
+
+    #[test]
+    fn test_mouse_dismiss_closes_confirm_remove() {
+        let mut ui = confirm_ui();
+        assert!(dismiss_popups_on_mouse(&mut ui));
+        assert!(ui.confirm_remove.is_none());
+    }
+
+    #[test]
+    fn test_mouse_dismiss_closes_help_settings_and_mode_selector() {
+        let mut ui = UiState {
+            show_help: true,
+            show_settings: true,
+            show_mode_selector: true,
+            ..UiState::default()
+        };
+        assert!(dismiss_popups_on_mouse(&mut ui));
+        assert!(!ui.show_help);
+        assert!(!ui.show_settings);
+        assert!(!ui.show_mode_selector);
+    }
+
+    #[test]
+    fn test_mouse_dismiss_false_when_no_popups_open() {
+        let mut ui = UiState::default();
+        assert!(!dismiss_popups_on_mouse(&mut ui));
+        assert!(!ui.sub_input_mode);
+        assert!(ui.confirm_remove.is_none());
+    }
+
+    fn make_group(name: &str, all: Vec<&str>) -> crate::api::types::Group {
+        crate::api::types::Group {
+            name: name.into(),
+            group_type: "Selector".into(),
+            now: None,
+            all: all.into_iter().map(String::from).collect(),
+        }
+    }
+
+    fn isolate_config(s: &mut AppState) {
+        s.config.subscriptions = crate::config::mioctl_config::Subscriptions::default();
+    }
+
+    #[tokio::test]
+    async fn test_move_down_subscriptions_clamps_to_last() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        s.config.add_subscription("a".into(), "https://a".into());
+        s.config.add_subscription("b".into(), "https://b".into());
+        handle_action(&Action::MoveDown, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_sub_idx, 1);
+        handle_action(&Action::MoveDown, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_sub_idx, 1);
+    }
+
+    #[tokio::test]
+    async fn test_move_down_subscriptions_empty_list_stays_zero() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        handle_action(&Action::MoveDown, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_sub_idx, 0);
+    }
+
+    #[tokio::test]
+    async fn test_move_up_subscriptions_saturates_at_zero() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        s.ui.selected_sub_idx = 1;
+        handle_action(&Action::MoveUp, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_sub_idx, 0);
+        handle_action(&Action::MoveUp, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_sub_idx, 0);
+    }
+
+    #[tokio::test]
+    async fn test_move_down_proxies_clamp_unchanged() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Proxies;
+        s.groups = vec![make_group("G", vec!["a", "b"])];
+        s.ui.selected_node_idx = 1;
+        handle_action(&Action::MoveDown, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.selected_node_idx, 1);
+    }
+
+    #[tokio::test]
+    async fn test_sub_add_enters_input_mode_and_clears_buffer() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        s.ui.sub_input = "junk".into();
+        handle_action(&Action::SubAdd, &mut s, shared.clone()).await;
+        assert!(s.ui.sub_input_mode);
+        assert!(s.ui.sub_input.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sub_add_other_view_is_noop() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Dashboard;
+        handle_action(&Action::SubAdd, &mut s, shared.clone()).await;
+        assert!(!s.ui.sub_input_mode);
+    }
+
+    #[tokio::test]
+    async fn test_sub_add_while_input_mode_active_preserves_buffer() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        s.ui.sub_input_mode = true;
+        s.ui.sub_input = "typed".into();
+        handle_action(&Action::SubAdd, &mut s, shared.clone()).await;
+        assert_eq!(s.ui.sub_input, "typed");
+    }
+
+    #[tokio::test]
+    async fn test_sub_update_no_selection_sets_no_loading() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        s.ui.loading = None;
+        isolate_config(&mut s);
+        handle_action(&Action::SubUpdate, &mut s, shared.clone()).await;
+        assert!(s.ui.loading.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_sub_update_other_view_is_noop() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Dashboard;
+        s.ui.loading = None;
+        isolate_config(&mut s);
+        s.config.add_subscription("a".into(), "https://a".into());
+        handle_action(&Action::SubUpdate, &mut s, shared.clone()).await;
+        assert!(s.ui.loading.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_switch_node_subscriptions_no_selection_no_spawn() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        s.ui.loading = None;
+        isolate_config(&mut s);
+        assert!(handle_action(&Action::SwitchNode, &mut s, shared.clone()).await);
+        assert!(s.ui.loading.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_subscription_switch_ignored_while_loading() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        s.config.add_subscription("sub1".into(), "https://x".into());
+        s.ui.loading = Some(LoadingKind::Refresh);
+        handle_action(&Action::SwitchNode, &mut s, shared.clone()).await;
+        assert_eq!(
+            s.ui.loading,
+            Some(LoadingKind::Refresh),
+            "loading must not be replaced while an operation is in flight"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sub_update_ignored_while_loading() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        s.config.add_subscription("sub1".into(), "https://x".into());
+        s.ui.loading = Some(LoadingKind::Refresh);
+        handle_action(&Action::SubUpdate, &mut s, shared.clone()).await;
+        assert_eq!(
+            s.ui.loading,
+            Some(LoadingKind::Refresh),
+            "loading must not be replaced while an operation is in flight"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mode_selector_enter_ignored_while_loading() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.show_mode_selector = true;
+        s.ui.loading = Some(LoadingKind::UpdateSubs);
+        handle_mode_selector_enter(&mut s, shared.clone()).await;
+        assert!(!s.ui.show_mode_selector, "selector must still close");
+        assert_eq!(
+            s.ui.loading,
+            Some(LoadingKind::UpdateSubs),
+            "loading must not be replaced while an operation is in flight"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_proxy_view_switch_node_keeps_subscription_loading() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Proxies;
+        s.client = Some(crate::api::client::MihomoClient::new("127.0.0.1:1", None).unwrap());
+        s.groups = vec![make_group("G", vec!["a"])];
+        s.ui.loading = Some(LoadingKind::UpdateSubs);
+        handle_action(&Action::SwitchNode, &mut s, shared.clone()).await;
+        assert_eq!(
+            s.ui.loading,
+            Some(LoadingKind::UpdateSubs),
+            "proxy op must not replace an in-flight subscription loading indicator"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_close_connection_subscriptions_sets_confirm() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        s.config.add_subscription("sub1".into(), "https://x".into());
+        assert!(handle_action(&Action::CloseConnection, &mut s, shared.clone()).await);
+        assert_eq!(s.ui.confirm_remove.as_deref(), Some("sub1"));
+    }
+
+    #[tokio::test]
+    async fn test_close_connection_subscriptions_empty_no_confirm() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Subscriptions;
+        isolate_config(&mut s);
+        assert!(handle_action(&Action::CloseConnection, &mut s, shared.clone()).await);
+        assert!(s.ui.confirm_remove.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_close_connection_connections_view_unchanged() {
+        let shared = crate::app::state::new_shared_state();
+        let mut s = shared.lock().await;
+        s.ui.active_view = Connections;
+        handle_action(&Action::CloseConnection, &mut s, shared.clone()).await;
+        assert!(s.ui.confirm_remove.is_none());
+    }
+
+    struct TestEnv {
+        _dir: tempfile::TempDir,
+        _guard: std::sync::MutexGuard<'static, ()>,
+        mihomo_path: std::path::PathBuf,
+    }
+
+    impl TestEnv {
+        fn new() -> Self {
+            Self::new_with("mixed-port: 7897\n")
+        }
+
+        fn new_with(mihomo_yaml: &str) -> Self {
+            let guard = crate::testutil::env_lock().lock().unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            unsafe { std::env::set_var("MIOCTL_HOME", dir.path()) };
+            unsafe { std::env::set_var("MIOCTL_TEST_NO_SYSTEMCTL", "1") };
+            let mihomo_path = dir.path().join("mihomo-config.yaml");
+            std::fs::write(&mihomo_path, mihomo_yaml).unwrap();
+            TestEnv {
+                _dir: dir,
+                _guard: guard,
+                mihomo_path,
+            }
+        }
+    }
+
+    impl Drop for TestEnv {
+        fn drop(&mut self) {
+            unsafe {
+                std::env::remove_var("MIOCTL_HOME");
+                std::env::remove_var("MIOCTL_TEST_NO_SYSTEMCTL");
+            }
+        }
+    }
+
+    async fn wait_loading_cleared(shared: &SharedState) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while shared.lock().await.ui.loading.is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for background task"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn logs_contain(shared: &SharedState, needle: &str) -> bool {
+        shared
+            .lock()
+            .await
+            .logs
+            .iter()
+            .any(|l| l.payload.contains(needle))
+    }
+
+    #[tokio::test]
+    async fn test_switch_profile_spawn_missing_archive_logs_error() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.ui.active_view = Subscriptions;
+            s.config
+                .add_subscription("ghost".into(), "https://x".into());
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_switch_profile(shared.clone(), cfg, "ghost".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Switch failed:").await);
+        assert!(logs_contain(&shared, "profile archive for 'ghost' is missing").await);
+    }
+
+    #[tokio::test]
+    async fn test_update_subscription_spawn_fetch_failure_logs_result() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.ui.active_view = Subscriptions;
+            s.config.add_subscription("sub1".into(), "not-a-url".into());
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_update_subscription(shared.clone(), cfg, "sub1".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "sub1: ERROR -").await);
+    }
+
+    #[tokio::test]
+    async fn test_update_subscription_spawn_unknown_name_logs_error() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let cfg = shared.lock().await.config.clone();
+        spawn_update_subscription(shared.clone(), cfg, "missing".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Update failed: no subscription named 'missing'").await);
+    }
+
+    #[tokio::test]
+    async fn test_remove_subscription_spawn_inactive_succeeds() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.config.add_subscription("sub1".into(), "https://x".into());
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_remove_subscription(shared.clone(), cfg, "sub1".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Subscription 'sub1' removed.").await);
+        let s = shared.lock().await;
+        assert!(s.config.subscriptions.items.is_empty());
+        assert_eq!(s.config.subscriptions.active, None);
+    }
+
+    #[tokio::test]
+    async fn test_remove_subscription_spawn_unknown_name_logs_error() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let cfg = shared.lock().await.config.clone();
+        spawn_remove_subscription(shared.clone(), cfg, "missing".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Remove failed: no subscription named 'missing'").await);
+    }
+
+    #[tokio::test]
+    async fn test_remove_subscription_spawn_clamps_selected_index() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.config.add_subscription("sub1".into(), "https://x".into());
+            s.config.add_subscription("sub2".into(), "https://y".into());
+            s.ui.selected_sub_idx = 1;
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_remove_subscription(shared.clone(), cfg, "sub2".into());
+        wait_loading_cleared(&shared).await;
+        {
+            let s = shared.lock().await;
+            assert_eq!(s.config.subscriptions.items.len(), 1);
+            assert_eq!(s.ui.selected_sub_idx, 0);
+        }
+
+        {
+            let mut s = shared.lock().await;
+            s.ui.loading = Some(LoadingKind::SwitchProfile);
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_remove_subscription(shared.clone(), cfg, "sub1".into());
+        wait_loading_cleared(&shared).await;
+        let s = shared.lock().await;
+        assert!(s.config.subscriptions.items.is_empty());
+        assert_eq!(s.ui.selected_sub_idx, 0);
+    }
+
+    #[tokio::test]
+    async fn test_add_subscription_spawn_invalid_url_logs_error() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let cfg = shared.lock().await.config.clone();
+        spawn_add_subscription(shared.clone(), cfg, "not-a-url".into());
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Add failed:").await);
+    }
+
+    #[tokio::test]
+    async fn test_add_subscription_spawn_activate_failure_keeps_shared_config() {
+        let env = TestEnv::new_with("invalid: [yaml\n");
+        let mock = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/sub"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(
+                "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 8388\n    cipher: aes-256-gcm\n    password: p\nproxy-groups:\n  - name: G\n    type: select\n    proxies: [N1]\nrules:\n  - MATCH,G\n",
+            ))
+            .mount(&mock)
+            .await;
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.config.mihomo.config_path = env.mihomo_path.to_string_lossy().into_owned();
+        }
+        let cfg = shared.lock().await.config.clone();
+        spawn_add_subscription(shared.clone(), cfg, format!("{}/sub", mock.uri()));
+        wait_loading_cleared(&shared).await;
+        assert!(logs_contain(&shared, "Add failed:").await);
+        let s = shared.lock().await;
+        assert!(s.config.subscriptions.items.is_empty());
+        assert_eq!(s.config.subscriptions.active, None);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_startup_archives_logs_warnings_for_missing_profiles() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.config.add_subscription("sub1".into(), "not-a-url".into());
+        }
+        migrate_startup_archives(&shared).await;
+        assert!(logs_contain(&shared, "profile 'sub1' has no archive and fetch failed").await);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_startup_archives_no_warnings_when_archived() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        {
+            let mut s = shared.lock().await;
+            s.config.add_subscription("sub1".into(), "https://x".into());
+        }
+        crate::subscription::profile::write_archive(
+            "sub1",
+            "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 8388\n    cipher: aes-256-gcm\n    password: p\n",
+        )
+        .unwrap();
+        migrate_startup_archives(&shared).await;
+        assert!(shared.lock().await.logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_startup_archives_removes_legacy_providers_dir() {
+        let _env = TestEnv::new();
+        let shared = crate::app::state::new_shared_state();
+        let legacy = MioctlConfig::config_dir().join("providers");
+        std::fs::create_dir_all(&legacy).unwrap();
+        migrate_startup_archives(&shared).await;
+        assert!(!legacy.exists());
+        assert!(logs_contain(&shared, "removed legacy providers/ directory").await);
+    }
+
+    #[test]
+    fn test_render_frame_subscriptions_content() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new();
+        state.ui.active_view = Subscriptions;
+        state.ui.loading = None;
+        state.config.subscriptions = crate::config::mioctl_config::Subscriptions {
+            active: Some("main".into()),
+            items: vec![crate::config::mioctl_config::SubscriptionItem {
+                name: "main".into(),
+                url: "https://example.com/sub".into(),
+                last_updated: Some("2026-01-01T00:00:00Z".into()),
+                node_count: Some(7),
+            }],
+        };
+        let spark = TrafficSpark::new();
+        let mut proxy_table = ratatui::widgets::TableState::default();
+        let mut conn_table = ratatui::widgets::TableState::default();
+        terminal
+            .draw(|f| render_frame(f, &state, &spark, &mut proxy_table, &mut conn_table))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            let mut x = 0u16;
+            while x < buffer.area.width {
+                let cell = &buffer[(x, y)];
+                text.push_str(cell.symbol());
+                let c = cell.symbol().chars().next().unwrap_or(' ');
+                x += if (c as u32) >= 0x2E80 { 2 } else { 1 };
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("Subs       "));
+        assert!(!text.contains("Update Subs"));
+        assert!(text.contains("* main  7 nodes  2026-01-01T00:00:00Z"));
+        assert!(text.contains("Enter 激活 · u 更新 · a 添加 · d 删除"));
+    }
+
+    #[test]
+    fn test_render_frame_subscriptions_empty() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut state = AppState::new();
+        state.ui.active_view = Subscriptions;
+        state.ui.loading = None;
+        state.config.subscriptions = crate::config::mioctl_config::Subscriptions::default();
+        let spark = TrafficSpark::new();
+        let mut proxy_table = ratatui::widgets::TableState::default();
+        let mut conn_table = ratatui::widgets::TableState::default();
+        terminal
+            .draw(|f| render_frame(f, &state, &spark, &mut proxy_table, &mut conn_table))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            let mut x = 0u16;
+            while x < buffer.area.width {
+                let cell = &buffer[(x, y)];
+                text.push_str(cell.symbol());
+                let c = cell.symbol().chars().next().unwrap_or(' ');
+                x += if (c as u32) >= 0x2E80 { 2 } else { 1 };
+            }
+            text.push('\n');
+        }
+        assert!(text.contains("No subscriptions — press 'a' to add"));
     }
 }

@@ -2,156 +2,47 @@ use crate::api::types::ParsedNode;
 use base64::Engine;
 use url::Url;
 
-pub enum SubscriptionFormat {
-    Yaml,
-    Base64,
-    PlainUri,
-}
-
-pub fn detect_format(content: &str) -> SubscriptionFormat {
-    let trimmed = content.trim();
-    if trimmed.starts_with("proxies:")
-        || trimmed.starts_with("mixed-port:")
-        || trimmed.starts_with("port:")
-        || trimmed.starts_with("---")
-    {
-        return SubscriptionFormat::Yaml;
+pub fn decode_base64_lenient(s: &str) -> Option<String> {
+    let cleaned: String = s.trim().chars().filter(|c| !c.is_whitespace()).collect();
+    if cleaned.is_empty() {
+        return None;
     }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(trimmed) {
-        if let Ok(text) = String::from_utf8(decoded) {
-            let first_line = text.trim().lines().next().unwrap_or("");
-            if first_line.starts_with("ss://")
-                || first_line.starts_with("vmess://")
-                || first_line.starts_with("trojan://")
-                || first_line.starts_with("vless://")
-                || first_line.starts_with("hysteria2://")
-            {
-                return SubscriptionFormat::Base64;
-            }
-        }
-    }
-    if trimmed.starts_with("ss://")
-        || trimmed.starts_with("vmess://")
-        || trimmed.starts_with("trojan://")
-    {
-        return SubscriptionFormat::PlainUri;
-    }
-    SubscriptionFormat::Yaml
-}
-
-pub fn parse_yaml(content: &str) -> Result<Vec<ParsedNode>, String> {
-    let yaml_val: serde_yaml::Value =
-        serde_yaml::from_str(content).map_err(|e| format!("YAML parse error: {}", e))?;
-
-    // Extract proxies array from top-level config
-    let proxies_arr = match yaml_val.get("proxies") {
-        Some(seq) => seq.as_sequence().cloned(),
-        None => yaml_val.as_sequence().cloned(),
+    let decode_standard = |input: &str| -> Option<String> {
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(input)
+            .ok()?;
+        String::from_utf8(decoded).ok()
     };
-
-    let items = match proxies_arr {
-        Some(arr) => arr,
-        None => {
-            // Try old format
-            #[derive(serde::Deserialize)]
-            struct YamlProxies {
-                proxies: Option<Vec<serde_json::Value>>,
-            }
-            let config: YamlProxies =
-                serde_yaml::from_str(content).map_err(|e| format!("YAML parse error: {}", e))?;
-            return Ok(config
-                .proxies
-                .unwrap_or_default()
-                .iter()
-                .filter_map(parse_proxy_value)
-                .collect());
-        }
+    if let Some(text) = decode_standard(&cleaned) {
+        return Some(text);
+    }
+    let padded = pad_base64(&cleaned);
+    if let Some(text) = decode_standard(&padded) {
+        return Some(text);
+    }
+    let decode_url_safe = |input: &str| -> Option<String> {
+        let decoded = base64::engine::general_purpose::URL_SAFE
+            .decode(input)
+            .ok()?;
+        String::from_utf8(decoded).ok()
     };
-
-    let nodes: Vec<ParsedNode> = items
-        .iter()
-        .filter_map(|v| parse_proxy_value(&serde_json::to_value(v).unwrap_or_default()))
-        .collect();
-    Ok(nodes)
+    if let Some(text) = decode_url_safe(&cleaned) {
+        return Some(text);
+    }
+    decode_url_safe(&padded)
 }
 
-fn parse_proxy_value(val: &serde_json::Value) -> Option<ParsedNode> {
-    let obj = val.as_object()?;
-    let name = obj
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let node_type = obj
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let server = obj
-        .get("server")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    // Port can be string or number in YAML
-    let port = obj
-        .get("port")
-        .and_then(|v| {
-            if let Some(n) = v.as_u64() {
-                return Some(n as u16);
-            }
-            if let Some(s) = v.as_str() {
-                return s.parse().ok();
-            }
-            None
-        })
-        .unwrap_or(443);
-    let cipher = obj
-        .get("cipher")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let password = obj
-        .get("password")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let uuid = obj
-        .get("uuid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let alter_id = obj
-        .get("alterId")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u16);
-    let network = obj
-        .get("network")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let ws_opts = obj.get("ws-opts").cloned();
-    let sni = obj
-        .get("sni")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let skip_cert_verify = obj.get("skip-cert-verify").and_then(|v| v.as_bool());
-    let udp = obj.get("udp").and_then(|v| v.as_bool());
-
-    Some(ParsedNode {
-        name,
-        node_type,
-        server,
-        port,
-        cipher,
-        password,
-        uuid,
-        alter_id,
-        network,
-        ws_opts,
-        sni,
-        skip_cert_verify,
-        udp,
-    })
+fn pad_base64(s: &str) -> String {
+    let mut out = s.to_string();
+    while !out.len().is_multiple_of(4) {
+        out.push('=');
+    }
+    out
 }
 
-pub fn parse_uri_list(content: &str) -> Result<Vec<ParsedNode>, String> {
+pub fn parse_uri_list(content: &str) -> Result<(Vec<ParsedNode>, Vec<String>), String> {
     let mut nodes = Vec::new();
+    let mut skipped = Vec::new();
     for line in content.trim().lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -159,18 +50,11 @@ pub fn parse_uri_list(content: &str) -> Result<Vec<ParsedNode>, String> {
         }
         if let Some(node) = parse_single_uri(line) {
             nodes.push(node);
+        } else {
+            skipped.push(line.to_string());
         }
     }
-    Ok(nodes)
-}
-
-pub fn parse_base64(content: &str) -> Result<Vec<ParsedNode>, String> {
-    let trimmed = content.trim();
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(trimmed)
-        .map_err(|e| format!("Base64 decode error: {}", e))?;
-    let text = String::from_utf8(decoded).map_err(|e| format!("UTF-8 error: {}", e))?;
-    parse_uri_list(&text)
+    Ok((nodes, skipped))
 }
 
 fn parse_single_uri(uri: &str) -> Option<ParsedNode> {
@@ -352,10 +236,16 @@ pub fn detect_subscription_name(content: &str) -> Result<String, String> {
 
 /// Extract a readable name from a subscription URL's hostname.
 pub fn name_from_url(url: &str) -> Result<String, String> {
-    let without_scheme = url
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
+    let lower = url.to_lowercase();
+    let without_scheme = if lower.starts_with("https://") {
+        &url[8..]
+    } else if lower.starts_with("http://") {
+        &url[7..]
+    } else {
+        url
+    };
     let host = without_scheme.split('/').next().unwrap_or(without_scheme);
+    let host = host.rsplit('@').next().unwrap_or(host);
     if host.is_empty() {
         return Err("URL has empty host".into());
     }
@@ -372,78 +262,72 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_yaml_clash() {
-        assert!(matches!(
-            detect_format("mixed-port: 7897\nproxies:"),
-            SubscriptionFormat::Yaml
-        ));
-    }
-    #[test]
-    fn test_detect_yaml_simple() {
-        assert!(matches!(
-            detect_format("proxies:\n  - name: t\n    type: ss"),
-            SubscriptionFormat::Yaml
-        ));
-    }
-    #[test]
-    fn test_detect_plain_uri() {
-        assert!(matches!(
-            detect_format("ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNzd29yZA@1.2.3.4:8388#T"),
-            SubscriptionFormat::PlainUri
-        ));
-    }
-    #[test]
-    fn test_parse_inline_yaml() {
-        let yaml = r#"proxies:
-  - { name: "Node1", type: ss, server: 1.2.3.4, port: '8388', cipher: aes-256-gcm, password: pass123, udp: true }
-  - { name: "Node2", type: vmess, server: vm.example.com, port: 443, uuid: abc-123, alterId: 0 }
-"#;
-        let nodes = parse_yaml(yaml).unwrap();
-        assert_eq!(nodes.len(), 2);
-        assert_eq!(nodes[0].name, "Node1");
-        assert_eq!(nodes[0].port, 8388);
-        assert_eq!(nodes[1].node_type, "vmess");
-    }
-    #[test]
-    fn test_parse_full_clash_config() {
-        let yaml = "mixed-port: 7897\nmode: rule\nproxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 8388, cipher: aes-256-gcm, password: p }\nproxy-groups:\n  - name: G\nrules:\n  - MATCH,G";
-        let nodes = parse_yaml(yaml).unwrap();
-        assert_eq!(nodes.len(), 1);
-    }
-    #[test]
-    fn test_parse_yaml_empty() {
-        assert!(parse_yaml("proxies: []\n").unwrap().is_empty());
-    }
-    #[test]
     fn test_parse_ss_uri() {
-        let n = parse_uri_list("ss://YWVzLTI1Ni1nY206dGVzdDEyMw@1.2.3.4:8388#TestNode").unwrap();
+        let (n, _) =
+            parse_uri_list("ss://YWVzLTI1Ni1nY206dGVzdDEyMw@1.2.3.4:8388#TestNode").unwrap();
         assert_eq!(n.len(), 1);
         assert_eq!(n[0].server, "1.2.3.4");
     }
     #[test]
     fn test_parse_trojan() {
-        let n = parse_uri_list("trojan://pass@t.example.com:443?sni=example.com#TN").unwrap();
+        let (n, _) = parse_uri_list("trojan://pass@t.example.com:443?sni=example.com#TN").unwrap();
         assert_eq!(n.len(), 1);
         assert_eq!(n[0].sni.as_deref(), Some("example.com"));
     }
     #[test]
     fn test_parse_multiline() {
-        let n = parse_uri_list(
+        let (n, _) = parse_uri_list(
             "ss://YWVzLTI1Ni1nY206dGVzdDEyMw@1.2.3.4:8388#A\ntrojan://p@5.6.7.8:443#B\n\n",
         )
         .unwrap();
         assert_eq!(n.len(), 2);
     }
     #[test]
-    fn test_parse_base64() {
-        let plain = "ss://YWVzLTI1Ni1nY206dGVzdDEyMw@1.2.3.4:8388#B64";
-        let enc = base64::engine::general_purpose::STANDARD.encode(plain);
-        let n = parse_base64(&enc).unwrap();
-        assert_eq!(n.len(), 1);
+    fn test_parse_uri_list_reports_skipped_lines() {
+        let (nodes, skipped) =
+            parse_uri_list("not-a-uri\nvless://uuid@host:443#V\n# comment").unwrap();
+        assert!(nodes.is_empty());
+        assert_eq!(skipped, vec!["not-a-uri", "vless://uuid@host:443#V"]);
     }
+
     #[test]
-    fn test_parse_base64_invalid() {
-        assert!(parse_base64("!!!invalid!!!").is_err());
+    fn test_decode_base64_lenient_unpadded() {
+        let yaml = "proxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 8388, cipher: aes-256-gcm, password: p }\n";
+        let mut b64 = base64::engine::general_purpose::STANDARD.encode(yaml);
+        while b64.ends_with('=') {
+            b64.pop();
+        }
+        assert_eq!(decode_base64_lenient(&b64).unwrap(), yaml);
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_line_wrapped() {
+        let yaml = "proxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 8388 }\n";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(yaml);
+        let wrapped: String = b64
+            .as_bytes()
+            .chunks(76)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(decode_base64_lenient(&wrapped).unwrap(), yaml);
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_url_safe_alphabet() {
+        let b64 = base64::engine::general_purpose::URL_SAFE.encode("😀");
+        assert!(
+            b64.contains('-'),
+            "test premise: URL_SAFE output must use URL-safe chars, got {}",
+            b64
+        );
+        assert_eq!(decode_base64_lenient(&b64).unwrap(), "😀");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_garbage_is_none() {
+        assert!(decode_base64_lenient("!!!not base64!!!").is_none());
+        assert!(decode_base64_lenient("   ").is_none());
     }
 
     #[test]
@@ -497,5 +381,20 @@ mod tests {
     #[test]
     fn test_name_from_url_empty_host() {
         assert!(name_from_url("https:///path").is_err());
+    }
+
+    #[test]
+    fn test_name_from_url_strips_userinfo() {
+        assert_eq!(
+            name_from_url("https://user:secret@example.com/sub").unwrap(),
+            "example"
+        );
+    }
+
+    #[test]
+    fn test_name_from_url_case_insensitive_scheme() {
+        let name = name_from_url("HTTPS://Example.COM/sub").unwrap();
+        assert!(!name.contains('/'), "got: {}", name);
+        assert!(!name.contains(':'), "got: {}", name);
     }
 }

@@ -19,8 +19,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &AppState) {
         item(&rules_label, ActiveView::Rules, &state.ui.active_view),
         item("Logs       ", ActiveView::Logs, &state.ui.active_view),
         ListItem::new(""),
+        item(
+            "Subs       ",
+            ActiveView::Subscriptions,
+            &state.ui.active_view,
+        ),
         item("Settings   ", ActiveView::Dashboard, &state.ui.active_view),
-        item("Update Subs", ActiveView::Dashboard, &state.ui.active_view),
     ];
     let list = List::new(items).block(Block::default().style(Style::default().bg(T.bg)));
     f.render_widget(list, area);

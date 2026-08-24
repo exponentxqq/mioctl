@@ -1,7 +1,7 @@
 use crate::cli::ConnectAction;
 use crate::config::mioctl_config::MioctlConfig;
 
-pub async fn run(action: ConnectAction) {
+pub async fn run(action: ConnectAction) -> bool {
     match action {
         ConnectAction::Test => {
             let config = MioctlConfig::load();
@@ -11,12 +11,19 @@ pub async fn run(action: ConnectAction) {
             } else {
                 None
             };
-            match crate::api::client::MihomoClient::new(&config.mihomo.external_controller, secret) {
+            match crate::api::client::MihomoClient::new(&config.mihomo.external_controller, secret)
+            {
                 Ok(c) => match c.get_version().await {
-                    Ok(v) => println!("Connected to mihomo {}", v.version),
+                    Ok(v) => {
+                        println!("Connected to mihomo {}", v.version);
+                        true
+                    }
                     Err(e) => {
                         let msg = e.to_string();
-                        if msg.contains("401") || msg.contains("Unauthorized") || msg.contains("403") {
+                        if msg.contains("401")
+                            || msg.contains("Unauthorized")
+                            || msg.contains("403")
+                        {
                             eprintln!("Authentication failed!");
                             eprintln!("  URL: {}", c.base_url());
                             eprintln!("  The mihomo server requires a secret key.");
@@ -29,9 +36,13 @@ pub async fn run(action: ConnectAction) {
                         } else {
                             eprintln!("API error: {}", e);
                         }
+                        false
                     }
                 },
-                Err(e) => eprintln!("Connection failed: {}\n  Check that mihomo is running and external-controller is enabled.", e),
+                Err(e) => {
+                    eprintln!("Connection failed: {}\n  Check that mihomo is running and external-controller is enabled.", e);
+                    false
+                }
             }
         }
     }

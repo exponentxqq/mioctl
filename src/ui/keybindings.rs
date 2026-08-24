@@ -24,12 +24,13 @@ pub enum Action {
     TogglePause,
     CycleLogLevel,
     ToggleHelp,
-    UpdateSubs,
     ShowSettings,
     ToggleProxy,
     Refresh,
     LogVisual,
     LogCopy,
+    SubUpdate,
+    SubAdd,
 }
 
 pub fn parse_key(event: KeyEvent) -> Option<Action> {
@@ -59,6 +60,10 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
             code: KeyCode::Char('5'),
             ..
         } => Some(Action::SwitchView(4)),
+        KeyEvent {
+            code: KeyCode::Char('6'),
+            ..
+        } => Some(Action::SwitchView(5)),
         KeyEvent {
             code: KeyCode::Char('j'),
             ..
@@ -175,6 +180,16 @@ pub fn parse_key(event: KeyEvent) -> Option<Action> {
             modifiers: KeyModifiers::NONE,
             ..
         } => Some(Action::LogCopy),
+        KeyEvent {
+            code: KeyCode::Char('u'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => Some(Action::SubUpdate),
+        KeyEvent {
+            code: KeyCode::Char('a'),
+            modifiers: KeyModifiers::NONE,
+            ..
+        } => Some(Action::SubAdd),
         _ => None,
     }
 }
@@ -185,13 +200,13 @@ pub fn parse_mouse(event: MouseEvent) -> Option<Action> {
             let x = event.column;
             let row = event.row as usize;
             if x < 16 {
-                // Sidebar rows: 0-4 = views, 6 = Settings, 7 = Update Subs
+                // Sidebar rows: 0-4 = views, 6 = Subs, 7 = Settings
                 match row {
                     0..=4 => {
                         return Some(Action::SwitchView(row));
                     }
-                    6 => return Some(Action::ShowSettings),
-                    7 => return Some(Action::UpdateSubs),
+                    6 => return Some(Action::SwitchView(5)),
+                    7 => return Some(Action::ShowSettings),
                     _ => {}
                 }
             }
@@ -210,6 +225,14 @@ mod tests {
     }
     fn ks(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+    }
+    fn sidebar_click(row: u16) -> MouseEvent {
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 0,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
     }
 
     #[test]
@@ -274,7 +297,52 @@ mod tests {
         assert_eq!(parse_key(k('y')), Some(Action::LogCopy));
     }
     #[test]
+    fn test_sub_keybindings() {
+        assert_eq!(parse_key(k('6')), Some(Action::SwitchView(5)));
+        assert_eq!(parse_key(k('u')), Some(Action::SubUpdate));
+        assert_eq!(parse_key(k('a')), Some(Action::SubAdd));
+    }
+    #[test]
+    fn test_sub_keybindings_require_no_modifiers() {
+        assert_eq!(
+            parse_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            None
+        );
+        assert_eq!(
+            parse_key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT)),
+            None
+        );
+    }
+    #[test]
     fn test_unknown() {
         assert_eq!(parse_key(k('z')), None);
+    }
+    #[test]
+    fn test_mouse_sidebar_rows_0_to_4_switch_views() {
+        assert_eq!(parse_mouse(sidebar_click(0)), Some(Action::SwitchView(0)));
+        assert_eq!(parse_mouse(sidebar_click(4)), Some(Action::SwitchView(4)));
+    }
+    #[test]
+    fn test_mouse_sidebar_row_6_switches_to_subscriptions() {
+        assert_eq!(parse_mouse(sidebar_click(6)), Some(Action::SwitchView(5)));
+    }
+    #[test]
+    fn test_mouse_sidebar_row_7_opens_settings() {
+        assert_eq!(parse_mouse(sidebar_click(7)), Some(Action::ShowSettings));
+    }
+    #[test]
+    fn test_mouse_sidebar_row_5_and_beyond_ignored() {
+        assert_eq!(parse_mouse(sidebar_click(5)), None);
+        assert_eq!(parse_mouse(sidebar_click(8)), None);
+    }
+    #[test]
+    fn test_mouse_main_area_ignored() {
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 20,
+            row: 6,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(parse_mouse(click), None);
     }
 }

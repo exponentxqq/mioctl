@@ -2,50 +2,23 @@
 async fn test_real_subscription_parse() {
     let url = "https://xWjXVnD.doggygosubs.com:8443/api/v1/client/4139e9bccc8cff837ee74fcfe65ef140";
 
-    let content = mioctl::subscription::fetcher::fetch_subscription(url)
+    let content = mioctl::subscription::fetcher::fetch_with_ua_probe(url, None)
         .await
         .expect("fetch failed");
     eprintln!("Fetched: {} bytes", content.len());
     eprintln!("Preview:\n{}", &content[..content.len().min(500)]);
 
-    let format = mioctl::subscription::parser::detect_format(&content);
-    let nodes = match format {
-        mioctl::subscription::parser::SubscriptionFormat::Yaml => {
-            eprintln!("Format: YAML");
-            mioctl::subscription::parser::parse_yaml(&content)
-        }
-        mioctl::subscription::parser::SubscriptionFormat::Base64 => {
-            eprintln!("Format: Base64");
-            mioctl::subscription::parser::parse_base64(&content)
-        }
-        mioctl::subscription::parser::SubscriptionFormat::PlainUri => {
-            eprintln!("Format: Plain URI list");
-            mioctl::subscription::parser::parse_uri_list(&content)
-        }
-    };
-
-    match nodes {
-        Ok(nodes) => {
-            eprintln!("Success: {} nodes parsed", nodes.len());
-            eprintln!("--- Node list ---");
-            for (i, n) in nodes.iter().enumerate() {
-                eprintln!(
-                    "{:3}. {:40} | {:8} | {}:{}",
-                    i + 1,
-                    n.name,
-                    n.node_type,
-                    n.server,
-                    n.port
-                );
-            }
-        }
-        Err(e) => eprintln!("Parse error: {}", e),
+    let profile = mioctl::subscription::profile::normalize_to_yaml("real", &content)
+        .expect("normalize failed");
+    eprintln!("Success: {} nodes", profile.node_count);
+    for warning in &profile.warnings {
+        eprintln!("warning: {}", warning);
     }
 }
 #[tokio::test]
 async fn debug_yaml() {
     let url = "https://xWjXVnD.doggygosubs.com:8443/api/v1/client/4139e9bccc8cff837ee74fcfe65ef140";
-    let content = mioctl::subscription::fetcher::fetch_subscription(url)
+    let content = mioctl::subscription::fetcher::fetch_with_ua_probe(url, None)
         .await
         .unwrap();
 
@@ -72,9 +45,9 @@ async fn debug_yaml() {
                             if v.is_sequence() {
                                 format!("sequence[{}]", v.as_sequence().unwrap().len())
                             } else if v.is_mapping() {
-                                format!("mapping")
+                                "mapping".to_string()
                             } else {
-                                format!("scalar")
+                                "scalar".to_string()
                             }
                         })
                     );

@@ -161,37 +161,6 @@ impl MihomoClient {
         Ok(())
     }
 
-    // --- Providers ---
-
-    pub async fn get_proxy_providers(&self) -> ApiResult<ProvidersResponse> {
-        let url = format!("{}/providers/proxies", self.base_url());
-        let resp = self.client().get(&url).send().await?;
-        let data = Self::check_response(resp).await?.json().await?;
-        Ok(data)
-    }
-
-    pub async fn update_proxy_provider(&self, name: &str) -> ApiResult<()> {
-        let url = format!(
-            "{}/providers/proxies/{}",
-            self.base_url(),
-            encode_path(name)
-        );
-        let resp = self.client().put(&url).send().await?;
-        Self::check_response(resp).await?;
-        Ok(())
-    }
-
-    pub async fn healthcheck_proxy_provider(&self, name: &str) -> ApiResult<()> {
-        let url = format!(
-            "{}/providers/proxies/{}/healthcheck",
-            self.base_url(),
-            encode_path(name)
-        );
-        let resp = self.client().get(&url).send().await?;
-        Self::check_response(resp).await?;
-        Ok(())
-    }
-
     // --- Config ---
 
     pub async fn get_configs(&self) -> ApiResult<MihomoConfig> {

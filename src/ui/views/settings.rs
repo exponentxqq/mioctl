@@ -31,7 +31,6 @@ pub fn render(f: &mut Frame, state: &AppState) {
          Subscriptions\n\
          ─────────────\n\
          Count: {}\n\
-         Update interval: {} min\n\n\
          Preferences\n\
          ───────────\n\
          Delay test URL: {}\n\
@@ -49,7 +48,6 @@ pub fn render(f: &mut Frame, state: &AppState) {
         connected,
         state.version,
         state.config.subscriptions.items.len(),
-        state.config.subscriptions.update_interval_minutes,
         state.config.preferences.delay_test_url,
         state.config.preferences.delay_test_timeout_ms,
         crate::config::mioctl_config::MioctlConfig::config_path().display(),

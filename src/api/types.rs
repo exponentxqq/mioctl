@@ -169,27 +169,6 @@ pub struct TunConfig {
     pub auto_route: Option<bool>,
 }
 
-// === Proxy Provider ===
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyProvider {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub provider_type: String,
-    #[serde(rename = "vehicleType")]
-    pub vehicle_type: String,
-    #[serde(default)]
-    pub proxies: Vec<Proxy>,
-    #[serde(rename = "updatedAt")]
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub struct ProvidersResponse {
-    pub providers: std::collections::HashMap<String, ProxyProvider>,
-}
-
 // === DNS Query ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

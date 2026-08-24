@@ -19,6 +19,8 @@ pub enum LoadingKind {
     TestNodeDelay,
     TestGroupDelay,
     UpdateSubs,
+    SwitchProfile,
+    AddSub,
 }
 
 impl LoadingKind {
@@ -32,6 +34,8 @@ impl LoadingKind {
             Self::TestNodeDelay => "Testing delay...",
             Self::TestGroupDelay => "Testing group delay...",
             Self::UpdateSubs => "Updating subscriptions...",
+            Self::SwitchProfile => "Switching profile...",
+            Self::AddSub => "Adding subscription...",
         }
     }
 }
@@ -50,6 +54,7 @@ pub enum ActiveView {
     Connections,
     Rules,
     Logs,
+    Subscriptions,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +77,10 @@ pub struct UiState {
     pub log_visual: bool,
     pub log_select_start: usize,
     pub log_select_end: usize,
+    pub selected_sub_idx: usize,
+    pub sub_input_mode: bool,
+    pub sub_input: String,
+    pub confirm_remove: Option<String>,
 }
 
 impl Default for UiState {
@@ -95,6 +104,10 @@ impl Default for UiState {
             log_visual: false,
             log_select_start: 0,
             log_select_end: 0,
+            selected_sub_idx: 0,
+            sub_input_mode: false,
+            sub_input: String::new(),
+            confirm_remove: None,
         }
     }
 }
@@ -117,7 +130,6 @@ pub struct AppState {
     pub system_proxy_enabled: bool,
     pub version: String,
     pub logs: Vec<LogEntry>,
-    pub proxy_providers: std::collections::HashMap<String, ProxyProvider>,
 
     pub connected: bool,
     pub proxy_mode: ProxyMode,
@@ -157,7 +169,6 @@ impl AppState {
             system_proxy_enabled: false,
             version: String::new(),
             logs: Vec::new(),
-            proxy_providers: std::collections::HashMap::new(),
             connected: false,
             proxy_mode: ProxyMode::Rule,
             last_updated: String::new(),
@@ -352,6 +363,21 @@ mod tests {
     }
 
     #[test]
+    fn test_loading_kind_new_variants() {
+        assert_eq!(LoadingKind::SwitchProfile.as_str(), "Switching profile...");
+        assert_eq!(LoadingKind::AddSub.as_str(), "Adding subscription...");
+    }
+
+    #[test]
+    fn test_sub_ui_defaults() {
+        let ui = UiState::default();
+        assert_eq!(ui.selected_sub_idx, 0);
+        assert!(!ui.sub_input_mode);
+        assert!(ui.sub_input.is_empty());
+        assert!(ui.confirm_remove.is_none());
+    }
+
+    #[test]
     fn test_log_ui_defaults() {
         let ui = UiState::default();
         assert_eq!(ui.log_cursor, 0);
@@ -362,11 +388,13 @@ mod tests {
 
     #[test]
     fn test_log_visual_selection_range() {
-        let mut ui = UiState::default();
-        ui.log_cursor = 5;
-        ui.log_visual = true;
-        ui.log_select_start = 5;
-        ui.log_select_end = 10;
+        let ui = UiState {
+            log_cursor: 5,
+            log_visual: true,
+            log_select_start: 5,
+            log_select_end: 10,
+            ..UiState::default()
+        };
         assert!(ui.log_select_start <= ui.log_select_end);
         assert_eq!(ui.log_select_end, 10);
     }

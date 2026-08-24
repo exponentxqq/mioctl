@@ -18,7 +18,7 @@ cargo clippy -- -D warnings  # lint
 cargo fmt --check            # format check
 ```
 
-Integration tests use `wiremock` and live in `tests/integration_test.rs` (API) and `tests/sub_test.rs` (subscription parsing). Unit tests are inline `#[cfg(test)] mod tests` in each source file.
+Integration tests use `wiremock` and live in `tests/integration_test.rs` (API), `tests/profiles_test.rs` (subscription profile lifecycle), and `tests/sub_test.rs` (subscription parsing, requires network). Unit tests are inline `#[cfg(test)] mod tests` in each source file; tests set `MIOCTL_HOME` to a temp dir and `MIOCTL_TEST_NO_SYSTEMCTL=1` to stay hermetic.
 
 ## Architecture
 
@@ -26,11 +26,15 @@ Integration tests use `wiremock` and live in `tests/integration_test.rs` (API) a
 
 - **`api/`** — `MihomoClient` REST + WebSocket endpoints, typed request/response structs, error types
 - **`app/`** — Business logic: `ProxyManager` (node switching, delay tests, mode cycling), `ConnectionManager`, `AppState`
-- **`ui/`** — TUI layer: event loop (`app.rs`), keybindings → `Action` enum, views (dashboard/proxies/connections/rules/logs), sidebar, widgets, catppuccin theme
-- **`subscription/`** — Subscription fetch, format auto-detection (YAML/Base64/URI), parser, injector (writes proxy-provider YAML for mihomo)
+- **`ui/`** — TUI layer: event loop (`app.rs`), keybindings → `Action` enum, views (dashboard/proxies/connections/rules/logs/subscriptions, key 6), sidebar, widgets, catppuccin theme
+- **`subscription/`** — Subscription profiles (single-active, clash-verge style): fetch, format
+  auto-detection (YAML/Base64/URI), normalize-to-YAML archive in `~/.config/mioctl/profiles/`,
+  activation merges proxies/proxy-groups/rules verbatim into mihomo config (those three sections
+  are fully managed by mioctl — manual edits are overwritten), backup/rollback, reload,
+  all other top-level keys are preserved (only proxy-providers is removed)
 - **`config/`** — `MioctlConfig` in TOML at `~/.config/mioctl/config.toml`, auto-creates defaults
 - **`os/`** — Linux system proxy via `~/.config/environment.d/proxy.conf`
-- **`cli/`** — clap CLI (tui/sub/connect subcommands)
+- **`cli/`** — clap CLI (tui/sub/connect/doctor subcommands; `sub` = list/add/register(alias)/use/update/remove)
 
 ### Key Patterns
 
@@ -55,6 +59,6 @@ Integration tests use `wiremock` and live in `tests/integration_test.rs` (API) a
 ## Config
 
 - User config: `~/.config/mioctl/config.toml`
-- Provider dir: `~/.config/mioctl/providers/`
+- Subscription archives: `~/.config/mioctl/profiles/*.yaml` (one per subscription, `[subscriptions].active` marks the current one)
 - System proxy: `~/.config/environment.d/proxy.conf`
 - mihomo must have `external-controller` enabled; `secret` is optional
