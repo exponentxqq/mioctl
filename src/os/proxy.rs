@@ -21,6 +21,21 @@ fn gsettings_enabled() -> bool {
     std::env::var("MIOCTL_TEST_NO_GSETTINGS").is_err()
 }
 
+/// systemctl/dbus env propagation is skipped when MIOCTL_TEST_NO_SYSTEMCTL
+/// is set (hermetic tests).
+fn systemctl_enabled() -> bool {
+    std::env::var("MIOCTL_TEST_NO_SYSTEMCTL").is_err()
+}
+
+const PROXY_VARS: [&str; 6] = [
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
 /// Check whether system proxy is enabled: proxy.conf exists and
 /// HTTP_PROXY line points to 127.0.0.1:<mixed_port>.
 pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
@@ -118,16 +133,58 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
             .output();
     }
 
+    // Push into the systemd user environment and dbus activation env so
+    // newly opened terminals pick it up immediately — environment.d files
+    // are only merged at login, so file writes alone would wait for re-login.
+    if systemctl_enabled() {
+        let base = format!("http://127.0.0.1:{}", mixed_port);
+        let no_proxy = "localhost,127.0.0.1,::1,.local";
+        let _ = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "set-environment",
+                &format!("HTTP_PROXY={}", base),
+                &format!("http_proxy={}", base),
+                &format!("HTTPS_PROXY={}", base),
+                &format!("https_proxy={}", base),
+                &format!("NO_PROXY={}", no_proxy),
+                &format!("no_proxy={}", no_proxy),
+            ])
+            .output();
+        let _ = std::process::Command::new("dbus-update-activation-environment")
+            .args([
+                "--systemd",
+                &format!("HTTP_PROXY={}", base),
+                &format!("http_proxy={}", base),
+                &format!("HTTPS_PROXY={}", base),
+                &format!("https_proxy={}", base),
+                &format!("NO_PROXY={}", no_proxy),
+                &format!("no_proxy={}", no_proxy),
+            ])
+            .output();
+    }
+
     Ok(())
 }
 
-/// Remove proxy.conf, proxy.env, and disable gsettings system proxy.
+/// Remove proxy.conf, proxy.env, disable gsettings system proxy, and unset
+/// the systemd user environment / dbus activation env.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
     if gsettings_enabled() {
         let _ = std::process::Command::new("gsettings")
             .args(["set", "org.gnome.system.proxy", "mode", "none"])
+            .output();
+    }
+    if systemctl_enabled() {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "unset-environment"])
+            .args(PROXY_VARS)
+            .output();
+        let _ = std::process::Command::new("dbus-update-activation-environment")
+            .args(["--systemd", "--unset"])
+            .args(PROXY_VARS)
             .output();
     }
 }
@@ -213,5 +270,21 @@ mod tests {
         assert!(!gsettings_enabled());
         unsafe { std::env::remove_var("MIOCTL_TEST_NO_GSETTINGS") };
         assert!(gsettings_enabled());
+    }
+
+    #[test]
+    fn test_systemctl_enabled_flag() {
+        unsafe { std::env::set_var("MIOCTL_TEST_NO_SYSTEMCTL", "1") };
+        assert!(!systemctl_enabled());
+        unsafe { std::env::remove_var("MIOCTL_TEST_NO_SYSTEMCTL") };
+        assert!(systemctl_enabled());
+    }
+
+    #[test]
+    fn test_proxy_vars_cover_all_names() {
+        assert_eq!(PROXY_VARS.len(), 6);
+        assert!(PROXY_VARS.contains(&"HTTP_PROXY"));
+        assert!(PROXY_VARS.contains(&"https_proxy"));
+        assert!(PROXY_VARS.contains(&"NO_PROXY"));
     }
 }
