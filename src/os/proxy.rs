@@ -16,6 +16,11 @@ fn proxy_env_path() -> PathBuf {
         .join("proxy.env")
 }
 
+/// gsettings is skipped when MIOCTL_TEST_NO_GSETTINGS is set (hermetic tests).
+fn gsettings_enabled() -> bool {
+    std::env::var("MIOCTL_TEST_NO_GSETTINGS").is_err()
+}
+
 /// Check whether system proxy is enabled: proxy.conf exists and
 /// HTTP_PROXY line points to 127.0.0.1:<mixed_port>.
 pub fn detect_system_proxy(mixed_port: Option<u16>) -> bool {
@@ -77,39 +82,41 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
 
     // Set via gsettings (GNOME/KDE system proxy) — browsers pick this up.
     // This is what clash-verge-rev does via the sysproxy crate.
-    let _ = std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.system.proxy", "mode", "manual"])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.system.proxy.http", "host", "127.0.0.1"])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args([
-            "set",
-            "org.gnome.system.proxy.http",
-            "port",
-            &mixed_port.to_string(),
-        ])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.system.proxy.https", "host", "127.0.0.1"])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args([
-            "set",
-            "org.gnome.system.proxy.https",
-            "port",
-            &mixed_port.to_string(),
-        ])
-        .output();
-    let _ = std::process::Command::new("gsettings")
-        .args([
-            "set",
-            "org.gnome.system.proxy",
-            "ignore-hosts",
-            "['localhost', '127.0.0.0/8', '::1', '.local']",
-        ])
-        .output();
+    if gsettings_enabled() {
+        let _ = std::process::Command::new("gsettings")
+            .args(["set", "org.gnome.system.proxy", "mode", "manual"])
+            .output();
+        let _ = std::process::Command::new("gsettings")
+            .args(["set", "org.gnome.system.proxy.http", "host", "127.0.0.1"])
+            .output();
+        let _ = std::process::Command::new("gsettings")
+            .args([
+                "set",
+                "org.gnome.system.proxy.http",
+                "port",
+                &mixed_port.to_string(),
+            ])
+            .output();
+        let _ = std::process::Command::new("gsettings")
+            .args(["set", "org.gnome.system.proxy.https", "host", "127.0.0.1"])
+            .output();
+        let _ = std::process::Command::new("gsettings")
+            .args([
+                "set",
+                "org.gnome.system.proxy.https",
+                "port",
+                &mixed_port.to_string(),
+            ])
+            .output();
+        let _ = std::process::Command::new("gsettings")
+            .args([
+                "set",
+                "org.gnome.system.proxy",
+                "ignore-hosts",
+                "['localhost', '127.0.0.0/8', '::1', '.local']",
+            ])
+            .output();
+    }
 
     Ok(())
 }
@@ -118,9 +125,11 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
-    let _ = std::process::Command::new("gsettings")
-        .args(["set", "org.gnome.system.proxy", "mode", "none"])
-        .output();
+    if gsettings_enabled() {
+        let _ = std::process::Command::new("gsettings")
+            .args(["set", "org.gnome.system.proxy", "mode", "none"])
+            .output();
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +205,13 @@ mod tests {
             .lines()
             .any(|line| line.starts_with("HTTP_PROXY=") && line.contains(expected));
         assert!(matches);
+    }
+
+    #[test]
+    fn test_gsettings_enabled_flag() {
+        unsafe { std::env::set_var("MIOCTL_TEST_NO_GSETTINGS", "1") };
+        assert!(!gsettings_enabled());
+        unsafe { std::env::remove_var("MIOCTL_TEST_NO_GSETTINGS") };
+        assert!(gsettings_enabled());
     }
 }
