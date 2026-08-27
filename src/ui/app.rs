@@ -1224,7 +1224,7 @@ pub async fn toggle_tun_flow(shared: &SharedState, client: MihomoClient) {
         }
         s.add_log(
             "info",
-            "TUN disabled (runtime), system proxy enabled — mihomo restart restores config-file state",
+            "TUN disabled (runtime), system proxy enabled — mihomo restart restores config-file state; existing terminals keep the old env, restart them or re-login for full effect",
         );
         s.ui.loading = None;
     } else {
@@ -1264,7 +1264,7 @@ pub async fn toggle_tun_flow(shared: &SharedState, client: MihomoClient) {
             let mut s = shared.lock().await;
             s.add_log(
                 "info",
-                "TUN enabled (runtime) — mihomo restart restores config-file state",
+                "TUN enabled (runtime) — mihomo restart restores config-file state; existing terminals keep the old env, restart them or re-login for full effect",
             );
         } else {
             let mut s = shared.lock().await;

@@ -133,24 +133,18 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
             .output();
     }
 
-    // Push into the systemd user environment and dbus activation env so
-    // newly opened terminals pick it up immediately — environment.d files
-    // are only merged at login, so file writes alone would wait for re-login.
+    // Re-merge environment.d into the systemd user environment so newly
+    // started services and dbus-activated processes pick the proxy up
+    // immediately. `systemctl --user set-environment` cannot override
+    // environment.d-merged variables (systemd keeps them in a separate
+    // transient layer that unset-environment cannot touch), so the file
+    // write + daemon-reload is the only reliable mechanism.
     if systemctl_enabled() {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "daemon-reload"])
+            .output();
         let base = format!("http://127.0.0.1:{}", mixed_port);
         let no_proxy = "localhost,127.0.0.1,::1,.local";
-        let _ = std::process::Command::new("systemctl")
-            .args([
-                "--user",
-                "set-environment",
-                &format!("HTTP_PROXY={}", base),
-                &format!("http_proxy={}", base),
-                &format!("HTTPS_PROXY={}", base),
-                &format!("https_proxy={}", base),
-                &format!("NO_PROXY={}", no_proxy),
-                &format!("no_proxy={}", no_proxy),
-            ])
-            .output();
         let _ = std::process::Command::new("dbus-update-activation-environment")
             .args([
                 "--systemd",
@@ -162,13 +156,25 @@ pub fn set_system_proxy(mixed_port: u16) -> std::io::Result<()> {
                 &format!("no_proxy={}", no_proxy),
             ])
             .output();
+        for (k, v) in [
+            ("HTTP_PROXY", base.as_str()),
+            ("http_proxy", base.as_str()),
+            ("HTTPS_PROXY", base.as_str()),
+            ("https_proxy", base.as_str()),
+            ("NO_PROXY", no_proxy),
+            ("no_proxy", no_proxy),
+        ] {
+            let _ = std::process::Command::new("tmux")
+                .args(["set-environment", "-g", &format!("{}={}", k, v)])
+                .output();
+        }
     }
 
     Ok(())
 }
 
-/// Remove proxy.conf, proxy.env, disable gsettings system proxy, and unset
-/// the systemd user environment / dbus activation env.
+/// Remove proxy.conf, proxy.env, disable gsettings system proxy, and
+/// re-merge environment.d so the systemd user environment drops the vars.
 pub fn clear_system_proxy() {
     let _ = fs::remove_file(proxy_conf_path());
     let _ = fs::remove_file(proxy_env_path());
@@ -179,13 +185,13 @@ pub fn clear_system_proxy() {
     }
     if systemctl_enabled() {
         let _ = std::process::Command::new("systemctl")
-            .args(["--user", "unset-environment"])
-            .args(PROXY_VARS)
+            .args(["--user", "daemon-reload"])
             .output();
-        let _ = std::process::Command::new("dbus-update-activation-environment")
-            .args(["--systemd", "--unset"])
-            .args(PROXY_VARS)
-            .output();
+        for v in PROXY_VARS {
+            let _ = std::process::Command::new("tmux")
+                .args(["set-environment", "-g", "-u", v])
+                .output();
+        }
     }
 }
 
