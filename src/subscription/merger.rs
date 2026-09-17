@@ -72,12 +72,14 @@ pub struct MergerResult {
 ///
 /// Reads the existing config (or uses default template), preserves infrastructure
 /// keys, replaces proxies/proxy-groups/rules with subscription content, removes
-/// proxy-providers.
+/// proxy-providers. `extra_rules` are prepended ahead of the subscription rules
+/// so they take precedence during top-down rule matching.
 pub fn merge_mihomo_config(
     config_path: &str,
     proxies: &Value,
     proxy_groups: &Value,
     rules: &Value,
+    extra_rules: &[String],
 ) -> Result<MergerResult, String> {
     let existing_yaml = std::fs::read_to_string(config_path).unwrap_or_default();
     let mut config: Mapping = if existing_yaml.trim().is_empty() {
@@ -92,7 +94,8 @@ pub fn merge_mihomo_config(
 
     config.insert(Value::String("proxies".into()), proxies.clone());
     config.insert(Value::String("proxy-groups".into()), proxy_groups.clone());
-    config.insert(Value::String("rules".into()), rules.clone());
+    let merged_rules = inject_extra_rules(rules, extra_rules);
+    config.insert(Value::String("rules".into()), merged_rules.clone());
 
     let mut ordered = Mapping::new();
     for &key in PRESERVE_KEYS {
@@ -120,7 +123,7 @@ pub fn merge_mihomo_config(
 
     let proxy_count = count_sequence(proxies);
     let group_count = count_sequence(proxy_groups);
-    let rule_count = count_sequence(rules);
+    let rule_count = count_sequence(&merged_rules);
 
     Ok(MergerResult {
         yaml,
@@ -128,6 +131,21 @@ pub fn merge_mihomo_config(
         group_count,
         rule_count,
     })
+}
+
+fn inject_extra_rules(rules: &Value, extra: &[String]) -> Value {
+    let Some(seq) = rules.as_sequence() else {
+        return rules.clone();
+    };
+    if extra.is_empty() {
+        return rules.clone();
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(seq.len() + extra.len());
+    for r in extra {
+        out.push(Value::String(r.clone()));
+    }
+    out.extend(seq.iter().cloned());
+    Value::Sequence(out)
 }
 
 fn count_sequence(val: &Value) -> usize {
@@ -190,7 +208,7 @@ dns:
         let rules = full.get("rules").unwrap();
 
         let result =
-            merge_mihomo_config(path.to_str().unwrap(), proxies, proxy_groups, rules).unwrap();
+            merge_mihomo_config(path.to_str().unwrap(), proxies, proxy_groups, rules, &[]).unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("dns:"));
@@ -232,6 +250,7 @@ proxy-providers:
             full.get("proxies").unwrap(),
             full.get("proxy-groups").unwrap(),
             full.get("rules").unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -270,6 +289,7 @@ proxies:
             full.get("proxies").unwrap(),
             full.get("proxy-groups").unwrap(),
             full.get("rules").unwrap(),
+            &[],
         )
         .unwrap();
 
@@ -284,6 +304,82 @@ proxies:
     }
 
     #[test]
+    fn test_extra_rules_prepended() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "mixed-port: 7897\n").unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G\n- MATCH,G").unwrap();
+        let extra = vec!["AND,((NETWORK,udp),(DST-PORT,443)),REJECT".to_string()];
+
+        let result =
+            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &extra)
+                .unwrap();
+
+        assert_eq!(result.rule_count, 3);
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let seq = out.get("rules").unwrap().as_sequence().unwrap();
+        let list: Vec<&str> = seq.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(
+            list,
+            vec![
+                "AND,((NETWORK,udp),(DST-PORT,443)),REJECT",
+                "DOMAIN-SUFFIX,x.com,G",
+                "MATCH,G"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_extra_rules_prepended_without_match() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "mixed-port: 7897\n").unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G").unwrap();
+        let extra = vec!["AND,((NETWORK,udp),(DST-PORT,443)),REJECT".to_string()];
+
+        let result =
+            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &extra)
+                .unwrap();
+
+        assert_eq!(result.rule_count, 2);
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let seq = out.get("rules").unwrap().as_sequence().unwrap();
+        let list: Vec<&str> = seq.iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(
+            list,
+            vec![
+                "AND,((NETWORK,udp),(DST-PORT,443)),REJECT",
+                "DOMAIN-SUFFIX,x.com,G"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_empty_extra_rules_keep_rules_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "mixed-port: 7897\n").unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G\n- MATCH,G").unwrap();
+
+        let result =
+            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &[])
+                .unwrap();
+
+        assert_eq!(result.rule_count, 2);
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        assert_eq!(out.get("rules").unwrap().as_sequence().unwrap().len(), 2);
+    }
+
+    #[test]
     fn test_merge_with_default_template_when_no_config() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.yaml");
@@ -293,7 +389,8 @@ proxies:
         let rules = Value::Sequence(vec![]);
 
         let result =
-            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules).unwrap();
+            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &[])
+                .unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("gvisor"));

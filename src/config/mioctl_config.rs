@@ -9,6 +9,8 @@ pub struct MihomoConnection {
     pub secret: String,
     #[serde(default = "default_config_path")]
     pub config_path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_rules: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -94,6 +96,7 @@ impl Default for MioctlConfig {
                 external_controller: default_host(),
                 secret: String::new(),
                 config_path: default_config_path(),
+                extra_rules: Vec::new(),
             },
             subscriptions: Subscriptions::default(),
             preferences: Preferences::default(),

@@ -109,7 +109,13 @@ async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<
 
     let config_path = config.mihomo.config_path.clone();
     backup_file(&config_path)?;
-    match merge_mihomo_config(&config_path, &sub.proxies, &sub.proxy_groups, &sub.rules) {
+    match merge_mihomo_config(
+        &config_path,
+        &sub.proxies,
+        &sub.proxy_groups,
+        &sub.rules,
+        &config.mihomo.extra_rules,
+    ) {
         Ok(r) => {
             if let Err(e) = write_config(&config_path, &r.yaml) {
                 rollback_file(&config_path).ok();
@@ -139,7 +145,13 @@ fn write_empty_state(config: &MioctlConfig) -> Result<(), String> {
     let groups = Value::Sequence(vec![]);
     let rules = Value::Sequence(vec![Value::String("MATCH,DIRECT".into())]);
     backup_file(&config_path)?;
-    let result = match merge_mihomo_config(&config_path, &proxies, &groups, &rules) {
+    let result = match merge_mihomo_config(
+        &config_path,
+        &proxies,
+        &groups,
+        &rules,
+        &config.mihomo.extra_rules,
+    ) {
         Ok(result) => result,
         Err(e) => {
             rollback_file(&config_path).ok();
