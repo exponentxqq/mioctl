@@ -58,6 +58,22 @@ Integration tests use `wiremock` and live in `tests/integration_test.rs` (API), 
 
 **Action Handling:** Mutations (SwitchNode, CycleMode, ToggleProxy, etc.) spawn background tasks that call `refresh_state()` on success to update UI immediately.
 
+## Release
+
+Version tags MUST use the `v` prefix (`v0.6.0`), never a bare `0.6.0`:
+
+1. `release.yml` CI only triggers on `v*.*.*` tags — it builds 4 targets
+   (x86_64-linux-gnu, x86_64-darwin, aarch64-darwin, x86_64-windows), packages
+   `mioctl-<tag>-<target>.tar.gz` + `.sha256` assets, and creates the GitHub Release.
+2. `install.sh` resolves the version from the GitHub `/releases/latest` API — a
+   bare tag never becomes a Release, so installs stay stuck on the last
+   `v`-prefixed version.
+
+Release flow: bump `Cargo.toml` → commit `chore: bump version to X.Y.Z` →
+`git tag vX.Y.Z && git push origin main vX.Y.Z` → CI builds and publishes.
+
+Historical note: bare tags `0.4.1`–`0.5.0` have no Release (predate this rule).
+
 ## Config
 
 - User config: `~/.config/mioctl/config.toml`
