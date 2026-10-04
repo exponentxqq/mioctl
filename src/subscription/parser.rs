@@ -174,6 +174,9 @@ pub struct SubscriptionContent {
     pub proxies: serde_yaml::Value,
     pub proxy_groups: serde_yaml::Value,
     pub rules: serde_yaml::Value,
+    /// Subscription-provided `dns:` section (kept verbatim; the merger only
+    /// takes `nameserver-policy` from it).
+    pub dns: Option<serde_yaml::Value>,
 }
 
 pub fn parse_subscription_full(content: &str) -> Result<SubscriptionContent, String> {
@@ -196,6 +199,7 @@ pub fn parse_subscription_full(content: &str) -> Result<SubscriptionContent, Str
         .get("rules")
         .cloned()
         .unwrap_or(serde_yaml::Value::Sequence(vec![]));
+    let dns = mapping.get("dns").filter(|v| !v.is_null()).cloned();
 
     // Validate proxies is a non-empty sequence
     match &proxies {
@@ -207,6 +211,7 @@ pub fn parse_subscription_full(content: &str) -> Result<SubscriptionContent, Str
         proxies,
         proxy_groups,
         rules,
+        dns,
     })
 }
 
@@ -347,6 +352,20 @@ mod tests {
     #[test]
     fn test_parse_subscription_full_missing_proxies_is_error() {
         assert!(parse_subscription_full("mode: rule\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_subscription_full_extracts_dns() {
+        let yaml = "dns:\n  enable: true\n  nameserver-policy:\n    +.quandao.com: [https://api-d.dohcore.com:2096/dns-query/token]\nproxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 443 }\nrules:\n  - MATCH,DIRECT";
+        let sub = parse_subscription_full(yaml).unwrap();
+        let dns = sub.dns.expect("dns section must be captured");
+        assert!(dns.get("nameserver-policy").is_some());
+
+        let no_dns = parse_subscription_full(
+            "proxies:\n  - { name: N1, type: ss, server: 1.2.3.4, port: 443 }\n",
+        )
+        .unwrap();
+        assert!(no_dns.dns.is_none());
     }
 
     #[test]

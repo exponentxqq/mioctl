@@ -74,12 +74,18 @@ pub struct MergerResult {
 /// keys, replaces proxies/proxy-groups/rules with subscription content, removes
 /// proxy-providers. `extra_rules` are prepended ahead of the subscription rules
 /// so they take precedence during top-down rule matching.
+///
+/// `sub_dns` is the subscription's `dns:` section, if any: its
+/// `nameserver-policy` entries are merged into the config's dns (subscription
+/// wins per-domain) so airport-specific resolvers steer node domains to the
+/// correct edge IPs. Other dns keys stay under the user's config control.
 pub fn merge_mihomo_config(
     config_path: &str,
     proxies: &Value,
     proxy_groups: &Value,
     rules: &Value,
     extra_rules: &[String],
+    sub_dns: Option<&Value>,
 ) -> Result<MergerResult, String> {
     let existing_yaml = std::fs::read_to_string(config_path).unwrap_or_default();
     let mut config: Mapping = if existing_yaml.trim().is_empty() {
@@ -91,6 +97,7 @@ pub fn merge_mihomo_config(
     };
 
     config.remove("proxy-providers");
+    merge_nameserver_policy(&mut config, sub_dns);
 
     config.insert(Value::String("proxies".into()), proxies.clone());
     config.insert(Value::String("proxy-groups".into()), proxy_groups.clone());
@@ -131,6 +138,47 @@ pub fn merge_mihomo_config(
         group_count,
         rule_count,
     })
+}
+
+/// Merge the subscription's `dns.nameserver-policy` into the config's dns
+/// section. Airport subscriptions use this to point their node domains at
+/// private DoH resolvers that return reachable edge IPs; without it public
+/// resolvers may hand out blocked CDN edges.
+///
+/// Only `nameserver-policy` is taken, per-domain, with subscription entries
+/// overriding the same domain in the user's config. All other dns keys
+/// (nameserver, fake-ip-filter, ...) are left untouched.
+fn merge_nameserver_policy(config: &mut Mapping, sub_dns: Option<&Value>) {
+    let Some(policy) = sub_dns
+        .and_then(|dns| dns.get("nameserver-policy"))
+        .and_then(|p| p.as_mapping())
+        .filter(|p| !p.is_empty())
+    else {
+        return;
+    };
+
+    let dns_key = Value::String("dns".into());
+    if !config.get(&dns_key).is_some_and(|v| v.is_mapping()) {
+        config.insert(dns_key.clone(), Value::Mapping(Mapping::new()));
+    }
+    let Some(dns_map) = config.get_mut(&dns_key).and_then(|v| v.as_mapping_mut()) else {
+        return;
+    };
+
+    let policy_key = Value::String("nameserver-policy".into());
+    if !dns_map.get(&policy_key).is_some_and(|v| v.is_mapping()) {
+        dns_map.insert(policy_key.clone(), Value::Mapping(Mapping::new()));
+    }
+    let Some(target) = dns_map
+        .get_mut(&policy_key)
+        .and_then(|v| v.as_mapping_mut())
+    else {
+        return;
+    };
+
+    for (domain, servers) in policy {
+        target.insert(domain.clone(), servers.clone());
+    }
 }
 
 fn inject_extra_rules(rules: &Value, extra: &[String]) -> Value {
@@ -207,8 +255,15 @@ dns:
         let proxy_groups = full.get("proxy-groups").unwrap();
         let rules = full.get("rules").unwrap();
 
-        let result =
-            merge_mihomo_config(path.to_str().unwrap(), proxies, proxy_groups, rules, &[]).unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            proxies,
+            proxy_groups,
+            rules,
+            &[],
+            None,
+        )
+        .unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("dns:"));
@@ -251,6 +306,7 @@ proxy-providers:
             full.get("proxy-groups").unwrap(),
             full.get("rules").unwrap(),
             &[],
+            None,
         )
         .unwrap();
 
@@ -290,6 +346,7 @@ proxies:
             full.get("proxy-groups").unwrap(),
             full.get("rules").unwrap(),
             &[],
+            None,
         )
         .unwrap();
 
@@ -314,9 +371,15 @@ proxies:
         let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G\n- MATCH,G").unwrap();
         let extra = vec!["AND,((NETWORK,udp),(DST-PORT,443)),REJECT".to_string()];
 
-        let result =
-            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &extra)
-                .unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &extra,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(result.rule_count, 3);
         let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
@@ -343,9 +406,15 @@ proxies:
         let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G").unwrap();
         let extra = vec!["AND,((NETWORK,udp),(DST-PORT,443)),REJECT".to_string()];
 
-        let result =
-            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &extra)
-                .unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &extra,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(result.rule_count, 2);
         let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
@@ -370,9 +439,15 @@ proxies:
         let proxy_groups = Value::Sequence(vec![]);
         let rules: Value = serde_yaml::from_str("- DOMAIN-SUFFIX,x.com,G\n- MATCH,G").unwrap();
 
-        let result =
-            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &[])
-                .unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            None,
+        )
+        .unwrap();
 
         assert_eq!(result.rule_count, 2);
         let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
@@ -388,9 +463,15 @@ proxies:
         let proxy_groups = Value::Sequence(vec![]);
         let rules = Value::Sequence(vec![]);
 
-        let result =
-            merge_mihomo_config(path.to_str().unwrap(), &proxies, &proxy_groups, &rules, &[])
-                .unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            None,
+        )
+        .unwrap();
 
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("gvisor"));
@@ -452,5 +533,189 @@ proxies:
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "content");
         discard_backup(path.to_str().unwrap());
         assert!(!dir.path().join("config.yaml.bak").exists());
+    }
+
+    #[test]
+    fn test_subscription_nameserver_policy_merged() {
+        let existing = r#"mixed-port: 7897
+dns:
+  enable: true
+  nameserver: [8.8.8.8]
+  nameserver-policy:
+    +.user.example: [https://user-doh.example/dns-query]
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, existing).unwrap();
+
+        let full: Value = serde_yaml::from_str(
+            "proxies:\n  - name: N1\n    type: ss\n    server: 1.2.3.4\n    port: 443\nproxy-groups:\n  - name: G\n    type: select\n    proxies: [N1]\nrules:\n  - MATCH,G",
+        )
+        .unwrap();
+        let sub_dns: Value = serde_yaml::from_str(
+            "enable: true\nnameserver: [9.9.9.9]\nnameserver-policy:\n  +.quandao.com:\n    - https://api-d.dohcore.com:2096/dns-query/token\n  +.jiandaoyun.com:\n    - https://api-d.dohcore.com:2096/dns-query/token\n",
+        )
+        .unwrap();
+
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            full.get("proxies").unwrap(),
+            full.get("proxy-groups").unwrap(),
+            full.get("rules").unwrap(),
+            &[],
+            Some(&sub_dns),
+        )
+        .unwrap();
+
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let dns = out.get("dns").unwrap();
+        let policy = dns.get("nameserver-policy").unwrap().as_mapping().unwrap();
+        assert!(policy.contains_key("+.quandao.com"));
+        assert!(policy.contains_key("+.jiandaoyun.com"));
+        assert!(
+            policy.contains_key("+.user.example"),
+            "user policy entries must be preserved"
+        );
+        // 订阅的其他 dns 键不得覆盖用户配置
+        let nameserver = dns.get("nameserver").unwrap().as_sequence().unwrap();
+        assert_eq!(nameserver.len(), 1);
+        assert_eq!(nameserver[0].as_str(), Some("8.8.8.8"));
+    }
+
+    #[test]
+    fn test_subscription_policy_overrides_same_domain() {
+        let existing = r#"mixed-port: 7897
+dns:
+  nameserver-policy:
+    +.quandao.com: [https://old.example/dns-query]
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, existing).unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules = Value::Sequence(vec![]);
+        let sub_dns: Value = serde_yaml::from_str(
+            "nameserver-policy:\n  +.quandao.com: [https://new.example/dns-query]\n",
+        )
+        .unwrap();
+
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            Some(&sub_dns),
+        )
+        .unwrap();
+
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let policy = out
+            .get("dns")
+            .unwrap()
+            .get("nameserver-policy")
+            .unwrap()
+            .as_mapping()
+            .unwrap();
+        assert_eq!(
+            policy.get("+.quandao.com").unwrap().as_sequence().unwrap()[0].as_str(),
+            Some("https://new.example/dns-query")
+        );
+    }
+
+    #[test]
+    fn test_no_subscription_dns_keeps_policy_untouched() {
+        let existing = r#"mixed-port: 7897
+dns:
+  nameserver-policy:
+    +.user.example: [https://user.example/dns-query]
+"#;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, existing).unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules = Value::Sequence(vec![]);
+
+        // Case 1: no dns at all in subscription.
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            None,
+        )
+        .unwrap();
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let policy = out
+            .get("dns")
+            .unwrap()
+            .get("nameserver-policy")
+            .unwrap()
+            .as_mapping()
+            .unwrap();
+        assert_eq!(policy.len(), 1);
+        assert!(policy.contains_key("+.user.example"));
+
+        // Case 2: subscription dns without nameserver-policy.
+        let sub_dns: Value = serde_yaml::from_str("enable: true\nnameserver: [1.1.1.1]\n").unwrap();
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            Some(&sub_dns),
+        )
+        .unwrap();
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        let policy = out
+            .get("dns")
+            .unwrap()
+            .get("nameserver-policy")
+            .unwrap()
+            .as_mapping()
+            .unwrap();
+        assert_eq!(policy.len(), 1);
+        assert!(policy.contains_key("+.user.example"));
+    }
+
+    #[test]
+    fn test_policy_creates_dns_section_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "mixed-port: 7897\n").unwrap();
+
+        let proxies = Value::Sequence(vec![]);
+        let proxy_groups = Value::Sequence(vec![]);
+        let rules = Value::Sequence(vec![]);
+        let sub_dns: Value = serde_yaml::from_str(
+            "nameserver-policy:\n  +.quandao.com: [https://api-d.dohcore.com:2096/dns-query/token]\n",
+        )
+        .unwrap();
+
+        let result = merge_mihomo_config(
+            path.to_str().unwrap(),
+            &proxies,
+            &proxy_groups,
+            &rules,
+            &[],
+            Some(&sub_dns),
+        )
+        .unwrap();
+
+        let out: Value = serde_yaml::from_str(&result.yaml).unwrap();
+        assert!(out
+            .get("dns")
+            .unwrap()
+            .get("nameserver-policy")
+            .unwrap()
+            .as_mapping()
+            .unwrap()
+            .contains_key("+.quandao.com"));
     }
 }

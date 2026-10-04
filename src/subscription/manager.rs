@@ -115,6 +115,7 @@ async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<
         &sub.proxy_groups,
         &sub.rules,
         &config.mihomo.extra_rules,
+        sub.dns.as_ref(),
     ) {
         Ok(r) => {
             if let Err(e) = write_config(&config_path, &r.yaml) {
@@ -151,6 +152,7 @@ fn write_empty_state(config: &MioctlConfig) -> Result<(), String> {
         &groups,
         &rules,
         &config.mihomo.extra_rules,
+        None,
     ) {
         Ok(result) => result,
         Err(e) => {

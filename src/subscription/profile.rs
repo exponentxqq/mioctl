@@ -66,6 +66,11 @@ fn from_content(sub: SubscriptionContent) -> Result<NormalizedProfile, String> {
     out.insert(Value::String("proxies".into()), sub.proxies);
     out.insert(Value::String("proxy-groups".into()), sub.proxy_groups);
     out.insert(Value::String("rules".into()), sub.rules);
+    // Keep the subscription's dns section in the archive so `activate` can
+    // merge its nameserver-policy into the mihomo config later.
+    if let Some(dns) = sub.dns {
+        out.insert(Value::String("dns".into()), dns);
+    }
     let yaml = serde_yaml::to_string(&Value::Mapping(out)).map_err(|e| e.to_string())?;
     Ok(NormalizedProfile {
         yaml,
@@ -246,6 +251,47 @@ rules:
     }
 
     #[test]
+    fn test_normalize_keeps_subscription_dns_section() {
+        let content = r#"dns:
+  enable: true
+  nameserver-policy:
+    +.quandao.com: [https://api-d.dohcore.com:2096/dns-query/token]
+proxies:
+  - name: N1
+    type: ss
+    server: 1.2.3.4
+    port: 443
+proxy-groups:
+  - name: G
+    type: select
+    proxies: [N1]
+rules:
+  - MATCH,G
+"#;
+        let p = normalize_to_yaml("test", content).unwrap();
+        let out: Value = serde_yaml::from_str(&p.yaml).unwrap();
+        assert!(out
+            .get("dns")
+            .unwrap()
+            .get("nameserver-policy")
+            .unwrap()
+            .as_mapping()
+            .unwrap()
+            .contains_key("+.quandao.com"));
+    }
+
+    #[test]
+    fn test_normalize_uri_list_has_no_dns_section() {
+        let p = normalize_to_yaml(
+            "test",
+            "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNzd29yZA@1.2.3.4:8388#N1",
+        )
+        .unwrap();
+        let out: Value = serde_yaml::from_str(&p.yaml).unwrap();
+        assert!(out.get("dns").is_none());
+    }
+
+    #[test]
     fn test_normalize_unpadded_base64_uri_list() {
         let uri_list = "ss://Y2hhY2hhMjAtaWV0Zi1wb2x5MTMwNTpwYXNzd29yZA@1.2.3.4:8388#N1\n";
         let mut b64 = base64::engine::general_purpose::STANDARD.encode(uri_list);
@@ -353,6 +399,7 @@ rules:
             proxies: Value::String("invalid".into()),
             proxy_groups: Value::Null,
             rules: Value::Null,
+            dns: None,
         })
         .unwrap();
         assert_eq!(profile.node_count, 0);

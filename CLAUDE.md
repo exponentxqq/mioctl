@@ -31,10 +31,12 @@ Integration tests use `wiremock` and live in `tests/integration_test.rs` (API), 
   auto-detection (YAML/Base64/URI), normalize-to-YAML archive in `~/.config/mioctl/profiles/`,
   activation merges proxies/proxy-groups/rules verbatim into mihomo config (those three sections
   are fully managed by mioctl — manual edits are overwritten), backup/rollback, reload,
-  all other top-level keys are preserved (only proxy-providers is removed)
+  all other top-level keys are preserved (only proxy-providers is removed);
+  the subscription's `dns.nameserver-policy` is merged into the config's dns
+  (subscription wins per-domain) so airport resolvers keep steering node domains
 - **`config/`** — `MioctlConfig` in TOML at `~/.config/mioctl/config.toml`, auto-creates defaults
 - **`os/`** — Linux system proxy via `~/.config/environment.d/proxy.conf`
-- **`cli/`** — clap CLI (tui/sub/connect/doctor subcommands; `sub` = list/add/register(alias)/use/update/remove)
+- **`cli/`** — clap CLI (tui/sub/connect/doctor subcommands; `sub` = list/add/register(alias)/use/update/remove; `doctor` = run/nodes)
 
 ### Key Patterns
 
