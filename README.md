@@ -239,7 +239,9 @@ mioctl 自动检测并解析以下订阅格式：
 ```
 mioctl tui               启动交互式 TUI
 mioctl connect test      测试 API 连接
-mioctl doctor            诊断 mihomo 环境
+mioctl doctor            诊断 mihomo 环境（等同 doctor run）
+mioctl doctor run        同上，显式执行环境诊断
+mioctl doctor nodes      预检所有节点连通性（默认经 mihomo API 延迟测试，TUN 下结果真实；--raw 强制原始 TCP 直连，--timeout-ms/--concurrency 可调）
 mioctl sub add <url>     添加订阅（--name 指定名称，--activate 立即激活）
 mioctl sub register <url> 注册订阅（add 的别名，不激活）
 mioctl sub use <name>    切换当前订阅

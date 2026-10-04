@@ -37,7 +37,9 @@ async fn main() {
             }
         }
         Some(Commands::Doctor { action }) => {
-            cli::doctor::run(action).await;
+            if !cli::doctor::run(action).await {
+                std::process::exit(1);
+            }
         }
     }
 }

@@ -34,7 +34,7 @@ pub enum Commands {
     /// Run diagnostic checks on mihomo setup
     Doctor {
         #[command(subcommand)]
-        action: DoctorAction,
+        action: Option<DoctorAction>,
     },
 }
 
@@ -220,6 +220,51 @@ mod tests {
                     all: true
                 }
             }) if name == "work"
+        ));
+    }
+
+    #[test]
+    fn parses_doctor_run_and_nodes() {
+        assert!(matches!(
+            Cli::try_parse_from(["mioctl", "doctor"]).unwrap().command,
+            Some(Commands::Doctor { action: None })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["mioctl", "doctor", "run"])
+                .unwrap()
+                .command,
+            Some(Commands::Doctor {
+                action: Some(DoctorAction::Run)
+            })
+        ));
+
+        let cli = Cli::try_parse_from([
+            "mioctl",
+            "doctor",
+            "nodes",
+            "--timeout-ms",
+            "1500",
+            "--concurrency",
+            "8",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Doctor {
+                action: Some(DoctorAction::Nodes {
+                    timeout_ms: 1500,
+                    concurrency: 8,
+                    raw: false
+                })
+            })
+        ));
+
+        let cli = Cli::try_parse_from(["mioctl", "doctor", "nodes", "--raw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Doctor {
+                action: Some(DoctorAction::Nodes { raw: true, .. })
+            })
         ));
     }
 }
