@@ -1122,6 +1122,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "ratatui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

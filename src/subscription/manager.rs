@@ -2,7 +2,8 @@ use crate::api::client::MihomoClient;
 use crate::config::mioctl_config::MioctlConfig;
 use crate::subscription::fetcher::fetch_with_ua_probe;
 use crate::subscription::merger::{
-    backup_file, discard_backup, merge_mihomo_config, rollback_file, write_config,
+    backup_file, discard_backup, merge_mihomo_config, read_extra_groups, rollback_file,
+    write_config,
 };
 use crate::subscription::parser::{detect_subscription_name, name_from_url};
 use crate::subscription::profile::{
@@ -93,6 +94,22 @@ async fn reload_mihomo(config: &MioctlConfig) -> String {
     }
 }
 
+fn resolve_extra_groups_path(config: &MioctlConfig) -> String {
+    let file = config.mihomo.extra_groups_file.trim();
+    if file.is_empty() {
+        return String::new();
+    }
+    let p = std::path::Path::new(file);
+    if p.is_absolute() {
+        file.to_string()
+    } else {
+        MioctlConfig::config_dir()
+            .join(p)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
 async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<String, String> {
     let archive = read_archive(name).map_err(|_| {
         format!(
@@ -107,6 +124,12 @@ async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<
         )
     })?;
 
+    let (extra_groups, file_warnings) = match read_extra_groups(&resolve_extra_groups_path(config))
+    {
+        Ok(groups) => (groups, Vec::new()),
+        Err(e) => (Vec::new(), vec![e]),
+    };
+
     let config_path = config.mihomo.config_path.clone();
     backup_file(&config_path)?;
     match merge_mihomo_config(
@@ -116,6 +139,7 @@ async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<
         &sub.rules,
         &config.mihomo.extra_rules,
         sub.dns.as_ref(),
+        &extra_groups,
     ) {
         Ok(r) => {
             if let Err(e) = write_config(&config_path, &r.yaml) {
@@ -128,10 +152,14 @@ async fn activate(config: &MioctlConfig, name: &str, no_reload: bool) -> Result<
             } else {
                 reload_mihomo(config).await
             };
-            Ok(format!(
+            let mut msg = format!(
                 "Switched to '{}'.\n  {} proxies, {} groups, {} rules\n  {}",
                 name, r.proxy_count, r.group_count, r.rule_count, reload_msg
-            ))
+            );
+            for w in file_warnings.iter().chain(r.warnings.iter()) {
+                msg.push_str(&format!("\n  warning: {}", w));
+            }
+            Ok(msg)
         }
         Err(e) => {
             rollback_file(&config_path).ok();
@@ -153,6 +181,7 @@ fn write_empty_state(config: &MioctlConfig) -> Result<(), String> {
         &rules,
         &config.mihomo.extra_rules,
         None,
+        &[],
     ) {
         Ok(result) => result,
         Err(e) => {

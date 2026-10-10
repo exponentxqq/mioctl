@@ -11,6 +11,11 @@ pub struct MihomoConnection {
     pub config_path: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_rules: Vec<String>,
+    /// Path to a YAML file with user-defined proxy-groups, merged into
+    /// mihomo's proxy-groups on every subscription activation. Relative
+    /// paths resolve against `MioctlConfig::config_dir()`. Empty = disabled.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub extra_groups_file: String,
 }
 
 fn default_host() -> String {
@@ -97,6 +102,7 @@ impl Default for MioctlConfig {
                 secret: String::new(),
                 config_path: default_config_path(),
                 extra_rules: Vec::new(),
+                extra_groups_file: String::new(),
             },
             subscriptions: Subscriptions::default(),
             preferences: Preferences::default(),
@@ -199,12 +205,34 @@ mod tests {
         let config = MioctlConfig::default();
         assert_eq!(config.mihomo.external_controller, "127.0.0.1:9090");
         assert_eq!(config.mihomo.secret, "");
+        assert_eq!(config.mihomo.extra_groups_file, "");
         assert!(config.subscriptions.items.is_empty());
         assert_eq!(config.subscriptions.active, None);
         assert_eq!(
             config.preferences.delay_test_url,
             "https://www.gstatic.com/generate_204"
         );
+    }
+
+    #[test]
+    fn test_extra_groups_file_roundtrip() {
+        let mut config = MioctlConfig::default();
+        config.mihomo.extra_groups_file = "extra-groups.yaml".into();
+        let serialized = toml::to_string_pretty(&config).unwrap();
+        let deserialized: MioctlConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.mihomo.extra_groups_file, "extra-groups.yaml");
+    }
+
+    #[test]
+    fn test_legacy_config_without_extra_groups_file_loads_empty() {
+        let legacy = r#"
+[mihomo]
+external_controller = "127.0.0.1:9090"
+secret = ""
+config_path = "/tmp/x.yaml"
+"#;
+        let config: MioctlConfig = toml::from_str(legacy).unwrap();
+        assert_eq!(config.mihomo.extra_groups_file, "");
     }
 
     #[test]
