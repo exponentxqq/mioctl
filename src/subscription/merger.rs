@@ -35,6 +35,9 @@ external-controller: 127.0.0.1:9090
 mode: rule
 log-level: info
 allow-lan: false
+profile:
+  store-selected: true
+  store-fake-ip: true
 dns:
   enable: true
   enhanced-mode: fake-ip
@@ -732,6 +735,7 @@ proxies:
         assert!(result.yaml.contains("mixed-port: 7897"));
         assert!(result.yaml.contains("gvisor"));
         assert!(result.yaml.contains("fake-ip"));
+        assert!(result.yaml.contains("store-fake-ip: true"));
     }
 
     #[test]
